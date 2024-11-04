@@ -52,6 +52,7 @@ async def on_message(message):
             await message.channel.send(f"🎉 Vous avez gagné 100 points ! Total: {user_data[user_id]['points']} points")
         else:
             await message.channel.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
+        return  # Ajout d'un return ici pour éviter le process_commands
 
     await bot.process_commands(message)
 
@@ -68,11 +69,9 @@ async def points(ctx):
 @bot.command(name="classement")
 async def classement(ctx):
     """Affiche le classement des 10 meilleurs joueurs"""
-    # Trie les joueurs par points
     classement = []
     for id_joueur, data in user_data.items():
         try:
-            # Récupère le membre du serveur
             membre = await ctx.guild.fetch_member(int(id_joueur))
             if membre:
                 classement.append({
@@ -82,17 +81,14 @@ async def classement(ctx):
         except discord.NotFound:
             continue
 
-    # Trie le classement par points
     classement_trie = sorted(classement, key=lambda x: x["points"], reverse=True)
 
-    # Crée l'embed
     embed = discord.Embed(
         title="🏆 Classement des Points",
         description="Voici les meilleurs joueurs !",
         color=0xFFD700
     )
 
-    # Ajoute les 10 premiers
     for i, joueur in enumerate(classement_trie[:10], 1):
         if i == 1:
             position = "🥇"
@@ -111,7 +107,7 @@ async def classement(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command(name="aide")  # Changed from "help" to "aide"
+@bot.command(name="aide")
 async def aide(ctx):
     """Affiche l'aide du bot"""
     embed = discord.Embed(
