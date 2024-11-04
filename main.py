@@ -111,8 +111,8 @@ async def classement(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command(name="help")
-async def help(ctx):
+@bot.command(name="aide")  # Changed from "help" to "aide"
+async def aide(ctx):
     """Affiche l'aide du bot"""
     embed = discord.Embed(
         title="📖 Aide du Bot",
@@ -135,6 +135,12 @@ async def help(ctx):
     embed.add_field(
         name="!classement",
         value="Voir le top 10 des joueurs",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="!aide",
+        value="Afficher ce message d'aide",
         inline=False
     )
 
