@@ -34,9 +34,8 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    user_id = str(message.author.id)
-    
     if message.content.lower() == "wassimchien":
+        user_id = str(message.author.id)
         if user_id not in user_data:
             user_data[user_id] = {
                 "points": 0,
@@ -54,60 +53,92 @@ async def on_message(message):
         else:
             await message.channel.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
 
-    elif message.content == "!points":
-        if user_id in user_data:
-            points = user_data[user_id]["points"]
-            await message.channel.send(f"💰 Vous avez {points} points !")
-        else:
-            await message.channel.send("Vous n'avez pas encore de points !")
-
-    elif message.content == "!classement":
-        # Trie les joueurs par points
-        classement = []
-        for id_joueur, data in user_data.items():
-            try:
-                # Récupère le membre du serveur
-                membre = await message.guild.fetch_member(int(id_joueur))
-                if membre:
-                    classement.append({
-                        "nom": membre.display_name,
-                        "points": data["points"]
-                    })
-            except discord.NotFound:
-                continue  # Ignore les utilisateurs qui ne sont plus sur le serveur
-
-        # Trie le classement par points (du plus grand au plus petit)
-        classement_trie = sorted(classement, key=lambda x: x["points"], reverse=True)
-
-        # Crée un joli message avec le classement
-        embed = discord.Embed(
-            title="🏆 Classement des Points",
-            description="Voici les meilleurs joueurs !",
-            color=0xFFD700  # Couleur or
-        )
-
-        # Ajoute les 10 premiers joueurs au classement
-        for i, joueur in enumerate(classement_trie[:10], 1):
-            # Emoji pour les 3 premiers, numéro pour les autres
-            if i == 1:
-                position = "🥇"
-            elif i == 2:
-                position = "🥈"
-            elif i == 3:
-                position = "🥉"
-            else:
-                position = f"{i}."
-
-            embed.add_field(
-                name=f"{position} {joueur['nom']}",
-                value=f"{joueur['points']} points",
-                inline=False
-            )
-
-        await message.channel.send(embed=embed)
-
     await bot.process_commands(message)
 
+@bot.command(name="points")
+async def points(ctx):
+    """Affiche vos points actuels"""
+    user_id = str(ctx.author.id)
+    if user_id in user_data:
+        points = user_data[user_id]["points"]
+        await ctx.send(f"💰 Vous avez {points} points !")
+    else:
+        await ctx.send("Vous n'avez pas encore de points !")
+
+@bot.command(name="classement")
+async def classement(ctx):
+    """Affiche le classement des 10 meilleurs joueurs"""
+    # Trie les joueurs par points
+    classement = []
+    for id_joueur, data in user_data.items():
+        try:
+            # Récupère le membre du serveur
+            membre = await ctx.guild.fetch_member(int(id_joueur))
+            if membre:
+                classement.append({
+                    "nom": membre.display_name,
+                    "points": data["points"]
+                })
+        except discord.NotFound:
+            continue
+
+    # Trie le classement par points
+    classement_trie = sorted(classement, key=lambda x: x["points"], reverse=True)
+
+    # Crée l'embed
+    embed = discord.Embed(
+        title="🏆 Classement des Points",
+        description="Voici les meilleurs joueurs !",
+        color=0xFFD700
+    )
+
+    # Ajoute les 10 premiers
+    for i, joueur in enumerate(classement_trie[:10], 1):
+        if i == 1:
+            position = "🥇"
+        elif i == 2:
+            position = "🥈"
+        elif i == 3:
+            position = "🥉"
+        else:
+            position = f"{i}."
+
+        embed.add_field(
+            name=f"{position} {joueur['nom']}",
+            value=f"{joueur['points']} points",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+@bot.command(name="help")
+async def help(ctx):
+    """Affiche l'aide du bot"""
+    embed = discord.Embed(
+        title="📖 Aide du Bot",
+        description="Voici les commandes disponibles :",
+        color=0x3498db
+    )
+    
+    embed.add_field(
+        name="wassimchien",
+        value="Gagnez 100 points (une fois par jour)",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="!points",
+        value="Voir votre nombre de points actuel",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="!classement",
+        value="Voir le top 10 des joueurs",
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
 
 keep_alive()
 bot.run(token)
