@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
 from keep_alive import keep_alive
@@ -34,7 +34,44 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    if message.content.lower() == "wassimchien":
+    if message.content.lower().startswith("@scarlanat check"):
+        user_id = str(message.author.id)
+        if user_id not in user_data:
+            user_data[user_id] = {
+                "points": 0,
+                "last_claim": None
+            }
+        
+        aujourd_hui = datetime.now().strftime("%Y-%m-%d")
+        derniere_fois = user_data[user_id]["last_claim"]
+        
+        if derniere_fois != aujourd_hui:
+            # Vérifier si @ryu_6 a répondu dans les 30 minutes
+            if "scarlanat" in [member.name for member in message.mentions]:
+                ryu_member = next((member for member in message.mentions if member.name == "scarlanat"), None)
+                if ryu_member:
+                    last_message_time = message.created_at
+                    if datetime.now() - last_message_time < timedelta(minutes=30):
+                        user_data[user_id]["points"] += 70
+                        user_data["scarlanat"] = user_data.get("scarlanat", 0) + 70
+                        user_data[user_id]["last_claim"] = aujourd_hui
+                        save_points()
+                        await message.channel.send(f"🎉 @ryu_6 a répondu à temps ! Vous gagnez 70 points ! Total: {user_data[user_id]['points']} points")
+                    else:
+                        user_data[user_id]["points"] += 150
+                        user_data[user_id]["last_claim"] = aujourd_hui
+                        save_points()
+                        await message.channel.send(f"🎉 Vous avez gagné 150 points car @ryu_6 n'a pas répondu à temps ! Total: {user_data[user_id]['points']} points")
+            else:
+                user_data[user_id]["points"] += 150
+                user_data[user_id]["last_claim"] = aujourd_hui
+                save_points()
+                await message.channel.send(f"🎉 Vous avez gagné 150 points car @ryu_6 n'a pas répondu à temps ! Total: {user_data[user_id]['points']} points")
+        else:
+            await message.channel.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
+        return
+
+    elif message.content.lower() == "wassimchien":
         user_id = str(message.author.id)
         if user_id not in user_data:
             user_data[user_id] = {
@@ -52,7 +89,7 @@ async def on_message(message):
             await message.channel.send(f"🎉 Vous avez gagné 100 points ! Total: {user_data[user_id]['points']} points")
         else:
             await message.channel.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
-        return  # Ajout d'un return ici pour éviter le process_commands
+        return
 
     await bot.process_commands(message)
 
@@ -107,8 +144,8 @@ async def classement(ctx):
 
     await ctx.send(embed=embed)
 
-@bot.command(name="aide")
-async def aide(ctx):
+@bot.command(name="bot-help")
+async def bot_help(ctx):
     """Affiche l'aide du bot"""
     embed = discord.Embed(
         title="📖 Aide du Bot",
@@ -135,7 +172,7 @@ async def aide(ctx):
     )
     
     embed.add_field(
-        name="!aide",
+        name="!bot-help",
         value="Afficher ce message d'aide",
         inline=False
     )
