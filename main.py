@@ -12,6 +12,8 @@ import ssl
 from flask import Flask
 from threading import Thread
 from pymongo.server_api import ServerApi
+import certifi
+
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -40,12 +42,16 @@ try:
     if not mongodb_uri:
         raise ValueError("MONGODB_URI not set")
     
-    # Create a new client and connect to the server
+    # Create a new client and connect to the server with SSL configuration
     client = MongoClient(
         mongodb_uri,
-        server_api=ServerApi('1')
+        server_api=ServerApi('1'),
+        tls=True,
+        tlsCAFile=certifi.where(),
+        retryWrites=True,
+        w='majority'
     )
-    
+        
     # Test the connection
     client.admin.command('ping')
     print("Connected successfully to MongoDB!")
@@ -55,8 +61,6 @@ try:
 except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
     raise
-
-
 
 def save_points():
     for user_id, data in user_data.items():
