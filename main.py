@@ -14,8 +14,8 @@ from threading import Thread
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+GUILD_ID = os.getenv("GUILD_ID")
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
 app = Flask('')
