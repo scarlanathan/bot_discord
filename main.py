@@ -11,6 +11,7 @@ from datetime import datetime
 import ssl
 from flask import Flask
 from threading import Thread
+from pymongo.server_api import ServerApi
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -25,7 +26,8 @@ def home():
     return 'Le bot est en ligne!'
 
 def run():
-    app.run(host='0.0.0.0', port=8080)
+    port = int(os.getenv("PORT", 8080))  # Utilise PORT de l'environnement ou 8080 par défaut
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
     t = Thread(target=run)
@@ -35,7 +37,12 @@ def keep_alive():
 user_data = {}
 
 mongodb_uri = os.getenv("MONGODB_URI")
-client = MongoClient(mongodb_uri, tls=True, tlsAllowInvalidCertificates=True)
+client = MongoClient(mongodb_uri, 
+    tls=True,
+    tlsAllowInvalidCertificates=False,  # Changez à False
+    ssl_cert_reqs=ssl.CERT_REQUIRED,
+    server_api=ServerApi('1')
+)
 db = client['nathan']  # Remplacez par le nom de votre base de données
 users_collection = db['users']  # Collection pour stocker les données des utilisateurs
 
@@ -75,6 +82,7 @@ async def on_ready():
     print(f'{bot.user} est connecté !')
     load_points()
     start_timer.start()
+    keep_alive()  # Démarrer le serveur web
 
 @tasks.loop(seconds=10)
 async def start_timer():
