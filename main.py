@@ -26,7 +26,7 @@ def home():
     return 'Le bot est en ligne!'
 
 def run():
-    port = int(os.getenv("PORT", 8080))  # Utilise PORT de l'environnement ou 8080 par défaut
+    port = int(os.getenv("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
@@ -34,17 +34,23 @@ def keep_alive():
     t.start()
 
 
-user_data = {}
 
-mongodb_uri = os.getenv("MONGODB_URI")
-client = MongoClient(mongodb_uri, 
-    tls=True,
-    tlsAllowInvalidCertificates=False,  # Changez à False
-    ssl_cert_reqs=ssl.CERT_REQUIRED,
-    server_api=ServerApi('1')
-)
-db = client['nathan']  # Remplacez par le nom de votre base de données
-users_collection = db['users']  # Collection pour stocker les données des utilisateurs
+try:
+    mongodb_uri = os.getenv("MONGODB_URI")
+    if not mongodb_uri:
+        raise ValueError("MONGODB_URI not set")
+    
+    client = MongoClient(mongodb_uri)
+    # Test de la connexion
+    client.admin.command('ping')
+    print("Connected successfully to MongoDB!")
+    
+    db = client['nathan']
+    users_collection = db['users']
+except Exception as e:
+    print(f"Failed to connect to MongoDB: {e}")
+    raise
+
 
 def save_points():
     for user_id, data in user_data.items():
