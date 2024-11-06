@@ -12,8 +12,8 @@ from datetime import datetime
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
-GUILD_ID = os.getenv("GUILD_ID") 
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+GUILD_ID = os.getenv("1299012900165255210") 
+CHANNEL_ID = os.getenv("C1299496069985599498")
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
 user_data = {}
