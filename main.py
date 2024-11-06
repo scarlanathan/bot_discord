@@ -20,11 +20,10 @@ bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
 user_data = {}
 
-mongodb_uri = "mongodb+srv://nathan:WHzqnSuWw5kI0QyH@botdiscord.ew8se.mongodb.net/"
-client = MongoClient(mongodb_uri)
+mongodb_uri = os.getenv("MONGODB_URI")
+client = MongoClient(mongodb_uri, tls=True, tlsAllowInvalidCertificates=True)
 db = client['nathan']  # Remplacez par le nom de votre base de données
 users_collection = db['users']  # Collection pour stocker les données des utilisateurs
-client = MongoClient(mongodb_uri, ssl=True, ssl_cert_reqs=ssl.CERT_NONE)
 
 def save_points():
     for user_id, data in user_data.items():
