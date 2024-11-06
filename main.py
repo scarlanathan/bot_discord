@@ -9,6 +9,7 @@ import asyncio
 import pymongo
 from pymongo import MongoClient
 from datetime import datetime
+import ssl
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -16,12 +17,14 @@ GUILD_ID = os.getenv("1299012900165255210")
 CHANNEL_ID = os.getenv("C1299496069985599498")
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
+
 user_data = {}
 
 mongodb_uri = "mongodb+srv://nathan:WHzqnSuWw5kI0QyH@botdiscord.ew8se.mongodb.net/"
 client = MongoClient(mongodb_uri)
 db = client['nathan']  # Remplacez par le nom de votre base de données
 users_collection = db['users']  # Collection pour stocker les données des utilisateurs
+client = MongoClient(mongodb_uri, ssl=True, ssl_cert_reqs=ssl.CERT_NONE)
 
 def save_points():
     for user_id, data in user_data.items():
