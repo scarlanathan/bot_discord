@@ -4,18 +4,32 @@ import json
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
-from keep_alive import keep_alive
 import asyncio
 import pymongo
 from pymongo import MongoClient
 from datetime import datetime
 import ssl
+from flask import Flask
+from threading import Thread
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
-GUILD_ID = os.getenv("1299012900165255210") 
-CHANNEL_ID = os.getenv("C1299496069985599498")
+GUILD_ID = int(os.getenv("GUILD_ID"))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return 'Le bot est en ligne!'
+
+def run():
+    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
 
 user_data = {}
@@ -43,6 +57,7 @@ async def on_ready():
     print(f'{bot.user} est connecté !')
     load_points()
     start_timer.start()
+    keep_alive()
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -222,5 +237,4 @@ async def bot_help(ctx):
 
     await ctx.send(embed=embed)
 
-keep_alive()
 bot.run(token)
