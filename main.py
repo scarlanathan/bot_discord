@@ -25,7 +25,7 @@ def home():
     return 'Le bot est en ligne!'
 
 def run():
-    app.run(host='0.0.0.0', port=int(os.getenv("PORT", 10000)))
+    app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
     t = Thread(target=run)
@@ -49,7 +49,12 @@ def save_points():
 
 def load_points():
     global user_data
-    user_data = {doc['_id']: doc for doc in users_collection.find()}
+    try:
+        user_data = {doc['_id']: doc for doc in users_collection.find()}
+    except pymongo.errors.ServerSelectionTimeoutError as e:
+        print(f"Failed to connect to MongoDB: {e}")
+    except Exception as e:
+        print(f"An error occurred while loading points: {e}")
 
 # Assurez-vous d'appeler load_points() au démarrage du bot
 @bot.event
