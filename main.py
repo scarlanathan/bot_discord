@@ -40,23 +40,18 @@ try:
     if not mongodb_uri:
         raise ValueError("MONGODB_URI not set")
     
-    # Use tls=True and tlsAllowInvalidCertificates if necessary
+    # Create a new client and connect to the server
     client = MongoClient(
         mongodb_uri,
-        tls=True,
-        tlsAllowInvalidCertificates=True,  # Set this only if you are testing without valid certificates
         server_api=ServerApi('1')
     )
-
+    
     # Test the connection
     client.admin.command('ping')
     print("Connected successfully to MongoDB!")
     
     db = client['nathan']
     users_collection = db['users']
-except pymongo.errors.ConfigurationError as e:
-    print(f"Configuration error: {e}")
-    raise
 except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
     raise
