@@ -8,11 +8,10 @@ import asyncio
 import pymongo
 from pymongo import MongoClient
 from datetime import datetime
-import ssl
-from flask import Flask
 from threading import Thread
 from pymongo.server_api import ServerApi
 import certifi
+from keep_alive import keep_alive
 
 
 load_dotenv()
@@ -20,20 +19,6 @@ token = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
-
-app = Flask('')
-
-@app.route('/')
-def home():
-    return 'Le bot est en ligne!'
-
-def run():
-    port = int(os.getenv("PORT", 18080))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
 
 
 
@@ -64,6 +49,17 @@ except Exception as e:
 
 def save_points():
     for user_id, data in user_data.items():
+        # Convertir les datetime en chaînes ISO pour la sauvegarde
+        if 'scarlanat_timer' in data and data['scarlanat_timer']:
+            data['scarlanat_timer'] = data['scarlanat_timer'].isoformat()
+        
+        # Gérer les timers multiples si nécessaire
+        if 'scarlanat_timers' in data:
+            data['scarlanat_timers'] = {
+                user_id: timer.isoformat() if isinstance(timer, datetime) else timer 
+                for user_id, timer in data.get('scarlanat_timers', {}).items()
+            }
+        
         users_collection.update_one(
             {'_id': user_id},
             {'$set': data},
@@ -74,12 +70,34 @@ def load_points():
     global user_data
     try:
         user_data = {doc['_id']: doc for doc in users_collection.find()}
+        
+        # Reconvertir les chaînes de datetime en objets datetime
+        for user_id in user_data:
+            if 'scarlanat_timer' in user_data[user_id] and user_data[user_id]['scarlanat_timer']:
+                try:
+                    user_data[user_id]['scarlanat_timer'] = datetime.fromisoformat(user_data[user_id]['scarlanat_timer'])
+                except (ValueError, TypeError):
+                    user_data[user_id]['scarlanat_timer'] = None
+            
+            # Reconvertir les timers multiples
+            if 'scarlanat_timers' in user_data[user_id]:
+                try:
+                    user_data[user_id]['scarlanat_timers'] = {
+                        timer_user_id: datetime.fromisoformat(timer) 
+                        for timer_user_id, timer in user_data[user_id].get('scarlanat_timers', {}).items()
+                    }
+                except (ValueError, TypeError):
+                    user_data[user_id]['scarlanat_timers'] = {}
+    
     except pymongo.errors.ServerSelectionTimeoutError as e:
         print(f"Failed to connect to MongoDB: {e}")
+        user_data = {}
     except Exception as e:
         print(f"An error occurred while loading points: {e}")
+        user_data = {}
 
-# Assurez-vous d'appeler load_points() au démarrage du bot
+
+
 @bot.event
 async def on_ready():
     print(f'{bot.user} est connecté !')
@@ -98,7 +116,7 @@ async def on_ready():
     print(f'{bot.user} est connecté !')
     load_points()
     start_timer.start()
-    keep_alive()  # Démarrer le serveur web
+    keep_alive()
 
 @tasks.loop(seconds=10)
 async def start_timer():
@@ -135,49 +153,64 @@ async def wassimchien(ctx):
         await ctx.send(f"🎉 Vous avez gagné 100 points ! Total: {user_data[user_id]['points']} points")
     else:
         await ctx.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
-
 @bot.command(name="check")
-async def check(ctx, username: str):
-    user_to_check = discord.utils.get(ctx.guild.members, name=username)
-    
-    if user_to_check is None:
-        await ctx.send(f"Utilisateur @{username} non trouvé dans le serveur.")
-        return
-
+async def check(ctx, *usernames: str):
+    # Vérification de l'heure
     current_time = datetime.now().time()
-    
     if current_time.hour >= 13:
         await ctx.send("❌ Vous ne pouvez plus gagner de points aujourd'hui, la limite de 13h est passée.")
         return
 
     user_id = str(ctx.author.id)
-    today = datetime.now().strftime("%Y-%m-%d")
     
+    # Initialisation des données utilisateur si nécessaire
     if user_id not in user_data:
-        user_data[user_id] = {
-            "points": 0,
-            "last_claim": None,
-            "scarlanat_timer": None
-        }
+        user_data[user_id] = {"points": 0, "last_claim": None, "scarlanat_timers": {}}
 
-    await ctx.send(f"Un compteur de 30 minutes a été lancé. Si <@{user_to_check.id}> ne répond pas, vous gagnerez 150 points!")
+    # Vérifier et ajouter les timers pour chaque utilisateur mentionné
+    checked_users = []
+    for username in usernames:
+        user_to_check = discord.utils.get(ctx.guild.members, name=username)
+        
+        if user_to_check is None:
+            await ctx.send(f"Utilisateur @{username} non trouvé dans le serveur.")
+            continue
 
-    user_data[user_id]["scarlanat_timer"] = datetime.now() + timedelta(minutes=30)
-    save_points()
+        user_to_check_id = str(user_to_check.id)
+        
+        # Initialiser les données de l'utilisateur vérifié
+        if user_to_check_id not in user_data:
+            user_data[user_to_check_id] = {"points": 0, "last_claim": None, "scarlanat_timers": {}}
 
-    def check_response(response):
-        return response.author.id == user_to_check.id and response.channel == ctx.channel
-    
-    try:
-        await bot.wait_for("message", timeout=1800, check=check_response)
-        user_data[user_id]["points"] += 70
+        # Ajouter un timer spécifique pour cet utilisateur
+        user_data[user_id]["scarlanat_timers"][user_to_check_id] = datetime.now() + timedelta(minutes=30)
+        checked_users.append(user_to_check)
+
+    # Message récapitulatif
+    if checked_users:
+        users_mention = " ".join([f"<@{user.id}>" for user in checked_users])
+        await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}. S'ils répondent, ils gagneront 150 points. Sinon, <@{ctx.author.id}> gagnera 150 points!")
         save_points()
-        await ctx.send(f"🎉 @{username} a répondu! Vous gagnez 70 points! Total: {user_data[user_id]['points']} points")
-    except asyncio.TimeoutError:
-        user_data[user_id]["points"] += 150
-        user_data[user_id]["last_claim"] = today
-        save_points()
-        await ctx.send(f"🎉 Vous avez gagné 150 points car @{username} n'a pas répondu! Total: {user_data[user_id]['points']} points")
+
+    # Modification de la fonction start_timer pour gérer plusieurs timers
+    @tasks.loop(seconds=10)
+    async def start_timer():
+        for user_id, data in user_data.items():
+            if "scarlanat_timers" in data and data["scarlanat_timers"]:
+                # Gérer les timers multiples
+                for checked_user_id, timer in list(data["scarlanat_timers"].items()):
+                    time_left = timer - datetime.now()
+                    if time_left.total_seconds() <= 0:
+                        # Supprimer le timer expiré
+                        del data["scarlanat_timers"][checked_user_id]
+                    else:
+                        # Notification du temps restant
+                        guild = bot.get_guild(GUILD_ID)
+                        if guild:
+                            member = await guild.get_member(int(user_id))
+                            if member:
+                                await member.send(f"⏱️ Vous avez encore {round(time_left.total_seconds())} secondes pour le check de l'utilisateur {checked_user_id}.")
+
 
 
 @bot.command(name="points")
