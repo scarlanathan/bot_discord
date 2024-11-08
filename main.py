@@ -34,7 +34,6 @@ try:
         tls=True,
         tlsCAFile=certifi.where(),
         retryWrites=True,
-        w='majority's
     )
         
     # Test the connection
