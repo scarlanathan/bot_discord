@@ -34,7 +34,7 @@ try:
         tls=True,
         tlsCAFile=certifi.where(),
         retryWrites=True,
-        w='majority'
+        w='majority's
     )
         
     # Test the connection
@@ -49,20 +49,17 @@ except Exception as e:
 
 def save_points():
     for user_id, data in user_data.items():
-        # Convertir les datetime en chaînes ISO pour la sauvegarde
-        if 'scarlanat_timer' in data and data['scarlanat_timer']:
-            data['scarlanat_timer'] = data['scarlanat_timer'].isoformat()
-        
-        # Gérer les timers multiples si nécessaire
-        if 'scarlanat_timers' in data:
-            data['scarlanat_timers'] = {
-                user_id: timer.isoformat() if isinstance(timer, datetime) else timer 
-                for user_id, timer in data.get('scarlanat_timers', {}).items()
+        # Convertir les datetime en chaînes ISO
+        serializable_data = data.copy()
+        if "scarlanat_timers" in serializable_data:
+            serializable_data["scarlanat_timers"] = {
+                k: v.isoformat() if isinstance(v, datetime) else v 
+                for k, v in serializable_data["scarlanat_timers"].items()
             }
         
         users_collection.update_one(
             {'_id': user_id},
-            {'$set': data},
+            {'$set': serializable_data},
             upsert=True
         )
 
@@ -71,23 +68,13 @@ def load_points():
     try:
         user_data = {doc['_id']: doc for doc in users_collection.find()}
         
-        # Reconvertir les chaînes de datetime en objets datetime
+        # Reconvertir les timers en datetime
         for user_id in user_data:
-            if 'scarlanat_timer' in user_data[user_id] and user_data[user_id]['scarlanat_timer']:
-                try:
-                    user_data[user_id]['scarlanat_timer'] = datetime.fromisoformat(user_data[user_id]['scarlanat_timer'])
-                except (ValueError, TypeError):
-                    user_data[user_id]['scarlanat_timer'] = None
-            
-            # Reconvertir les timers multiples
-            if 'scarlanat_timers' in user_data[user_id]:
-                try:
-                    user_data[user_id]['scarlanat_timers'] = {
-                        timer_user_id: datetime.fromisoformat(timer) 
-                        for timer_user_id, timer in user_data[user_id].get('scarlanat_timers', {}).items()
-                    }
-                except (ValueError, TypeError):
-                    user_data[user_id]['scarlanat_timers'] = {}
+            if "scarlanat_timers" in user_data[user_id]:
+                user_data[user_id]["scarlanat_timers"] = {
+                    k: datetime.fromisoformat(v) if isinstance(v, str) else v
+                    for k, v in user_data[user_id]["scarlanat_timers"].items()
+                }
     
     except pymongo.errors.ServerSelectionTimeoutError as e:
         print(f"Failed to connect to MongoDB: {e}")
@@ -95,7 +82,6 @@ def load_points():
     except Exception as e:
         print(f"An error occurred while loading points: {e}")
         user_data = {}
-
 
 
 @bot.event
@@ -153,6 +139,9 @@ async def wassimchien(ctx):
         await ctx.send(f"🎉 Vous avez gagné 100 points ! Total: {user_data[user_id]['points']} points")
     else:
         await ctx.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
+
+
+
 @bot.command(name="check")
 async def check(ctx, *usernames: str):
     # Vérification de l'heure
@@ -162,13 +151,20 @@ async def check(ctx, *usernames: str):
         return
 
     user_id = str(ctx.author.id)
+    today = datetime.now().strftime("%Y-%m-%d")
     
     # Initialisation des données utilisateur si nécessaire
     if user_id not in user_data:
-        user_data[user_id] = {"points": 0, "last_claim": None, "scarlanat_timers": {}}
+        user_data[user_id] = {
+            "points": 0, 
+            "last_claim": None, 
+            "scarlanat_timers": {}
+        }
 
     # Vérifier et ajouter les timers pour chaque utilisateur mentionné
     checked_users = []
+    check_details = {}
+
     for username in usernames:
         user_to_check = discord.utils.get(ctx.guild.members, name=username)
         
@@ -180,10 +176,22 @@ async def check(ctx, *usernames: str):
         
         # Initialiser les données de l'utilisateur vérifié
         if user_to_check_id not in user_data:
-            user_data[user_to_check_id] = {"points": 0, "last_claim": None, "scarlanat_timers": {}}
+            user_data[user_to_check_id] = {
+                "points": 0, 
+                "last_claim": None, 
+                "scarlanat_timers": {}
+            }
 
         # Ajouter un timer spécifique pour cet utilisateur
-        user_data[user_id]["scarlanat_timers"][user_to_check_id] = datetime.now() + timedelta(minutes=30)
+        timer = datetime.now() + timedelta(minutes=30)
+        user_data[user_id]["scarlanat_timers"][user_to_check_id] = timer
+        
+        # Stocker les détails du check
+        check_details[user_to_check_id] = {
+            "username": username,
+            "timer": timer
+        }
+        
         checked_users.append(user_to_check)
 
     # Message récapitulatif
@@ -192,25 +200,43 @@ async def check(ctx, *usernames: str):
         await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}. S'ils répondent, ils gagneront 150 points. Sinon, <@{ctx.author.id}> gagnera 150 points!")
         save_points()
 
-    # Modification de la fonction start_timer pour gérer plusieurs timers
-    @tasks.loop(seconds=10)
-    async def start_timer():
-        for user_id, data in user_data.items():
-            if "scarlanat_timers" in data and data["scarlanat_timers"]:
-                # Gérer les timers multiples
-                for checked_user_id, timer in list(data["scarlanat_timers"].items()):
-                    time_left = timer - datetime.now()
-                    if time_left.total_seconds() <= 0:
-                        # Supprimer le timer expiré
-                        del data["scarlanat_timers"][checked_user_id]
-                    else:
-                        # Notification du temps restant
-                        guild = bot.get_guild(GUILD_ID)
-                        if guild:
-                            member = await guild.get_member(int(user_id))
-                            if member:
-                                await member.send(f"⏱️ Vous avez encore {round(time_left.total_seconds())} secondes pour le check de l'utilisateur {checked_user_id}.")
+    # Fonction de vérification des réponses
+    def check_response(response):
+        return (
+            response.author.id in [int(user_id) for user_id in check_details.keys()] and 
+            response.channel == ctx.channel
+        )
 
+    # Attente des réponses
+    try:
+        response = await bot.wait_for("message", timeout=1800, check=check_response)
+        
+        # Identifier l'utilisateur qui a répondu
+        responder_id = str(response.author.id)
+        
+        # Donner les points à l'utilisateur qui a répondu
+        user_data[responder_id]["points"] += 100
+        user_data[responder_id]["last_claim"] = today
+        
+        # Supprimer les timers
+        if user_id in user_data:
+            user_data[user_id]["scarlanat_timers"].clear()
+        
+        save_points()
+        
+        await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne 100 points ! Total: {user_data[responder_id]['points']} points")
+
+    except asyncio.TimeoutError:
+        # Si personne ne répond, donner les points à l'initiateur
+        user_data[user_id]["points"] += 70
+        user_data[user_id]["last_claim"] = today
+        
+        # Supprimer les timers
+        user_data[user_id]["scarlanat_timers"].clear()
+        
+        save_points()
+        
+        await ctx.send(f"🎉 <@{ctx.author.id}> a gagné 70 points car personne n'a répondu ! Total: {user_data[user_id]['points']} points")
 
 
 @bot.command(name="points")
