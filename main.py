@@ -239,8 +239,70 @@ async def check(ctx, *mentions: discord.Member):
         await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}. " 
                        f"<@{ctx.author.id}> gagne {points_to_add} points et les utilisateurs taggés perdent 50 points chacun!")
         save_points()
+        
+    # Attente des réponses
+    responded_users = set()
+    try:
+        while len(responded_users) < len(checked_users):
+            response = await bot.wait_for(
+                "message", 
+                timeout=1800,  # 30 minutes
+                check=lambda m: (
+                    m.author.id in [user.id for user in checked_users] and 
+                    m.channel == ctx.channel and
+                    m.author.id not in [user.id for user in responded_users]
+                )
+            )
+            
+            # Identifier l'utilisateur qui a répondu
+            responder_id = str(response.author.id)
+            
+            # Donner les points à l'utilisateur qui a répondu
+            user_data[responder_id]["points"] += 100
+            user_data[responder_id]["last_claim"] = today
+            
+            # Ajouter l'utilisateur aux répondants
+            responded_users.add(response.author.id)
+            
+            # Message de confirmation
+            await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne 100 points ! Total: {user_data[responder_id]['points']} points")
+        
+        # Si tous les utilisateurs ont répondu
+        await ctx.send("Tous les utilisateurs mentionnés ont répondu !")
 
-    # Reste du code identique...
+    except asyncio.TimeoutError:
+        # Liste des utilisateurs qui n'ont pas répondu
+        non_responded = [user for user in checked_users if user.id not in responded_users]
+        
+        if non_responded:
+            # Donner des points à l'initiateur
+            user_data[user_id]["points"] += 70
+            user_data[user_id]["last_claim"] = today
+            
+            # Message indiquant qui n'a pas répondu
+            non_responded_mentions = " ".join([user.mention for user in non_responded])
+            await ctx.send(f"🎉 <@{ctx.author.id}> a gagné 70 points car {non_responded_mentions} n'ont pas répondu ! Total: {user_data[user_id]['points']} points")
+            
+    save_points()
+    
+    
+@bot.command(name="pompecheck")
+async def pompecheck(ctx):
+    # Récupérer tous les membres connectés du serveur (hors bots)
+    connected_members = [member for member in ctx.guild.members if member.status != discord.Status.offline and not member.bot]
+    
+    # Vérifier s'il y a des membres connectés
+    if not connected_members:
+        await ctx.send("Aucun membre connecté à taguer !")
+        return
+
+    # Préparer la liste des membres à taguer
+    users_mention = " ".join([member.mention for member in connected_members])
+    
+    # Message de défi
+    await ctx.send(f"{users_mention} Faites-moi 10 pompes, gros porc de gros sac")
+
+
 
 @bot.command(name="points")
 async def points(ctx):
@@ -251,6 +313,8 @@ async def points(ctx):
         await ctx.send(f"💰 Vous avez {points} points !")
     else:
         await ctx.send("Vous n'avez pas encore de points !")
+
+
 
 @bot.command(name="classement")
 async def classement(ctx):
