@@ -122,33 +122,69 @@ async def start_timer():
 @bot.command(name="wassimchien")
 async def wassimchien(ctx):
     user_id = str(ctx.author.id)
+    
+    # Initialisation des données utilisateur avec les nouvelles variables de streak
     if user_id not in user_data:
         user_data[user_id] = {
             "points": 0,
-            "last_claim": None
+            "last_claim": None,
+            "streak": 0,
+            "last_streak_date": None
         }
     
     aujourd_hui = datetime.now().strftime("%Y-%m-%d")
-    derniere_fois = user_data[user_id]["last_claim"]
+    hier = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
-    if derniere_fois != aujourd_hui:
-        user_data[user_id]["points"] += 100
-        user_data[user_id]["last_claim"] = aujourd_hui
-        save_points()
-        await ctx.send(f"🎉 Vous avez gagné 100 points ! Total: {user_data[user_id]['points']} points")
-    else:
+    # Logique de mise à jour du streak
+    if user_data[user_id]["last_claim"] is None:
+        # Première utilisation
+        user_data[user_id]["streak"] = 1
+    elif user_data[user_id]["last_claim"] == hier:
+        # Streak continue
+        user_data[user_id]["streak"] += 1
+    elif user_data[user_id]["last_claim"] == aujourd_hui:
+        # Déjà réclamé aujourd'hui
         await ctx.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
-
+        return
+    else:
+        # Streak interrompu
+        user_data[user_id]["streak"] = 1
+    
+    # Calcul des points avec bonus de streak
+    points_base = 100
+    bonus_streak = min(user_data[user_id]["streak"] * 10, 100)  # Bonus max de 100 points
+    points_totaux = points_base + bonus_streak
+    
+    # Mise à jour des données
+    user_data[user_id]["points"] += points_totaux
+    user_data[user_id]["last_claim"] = aujourd_hui
+    
+    save_points()
+    
+    # Message avec information de streak
+    await ctx.send(f"🎉 Vous avez gagné {points_totaux} points (100 points de base + {bonus_streak} points de streak) !" 
+                   f"\nVotre streak actuel est de {user_data[user_id]['streak']} jours !" 
+                   f"\nTotal de points : {user_data[user_id]['points']} points")
 
 
 @bot.command(name="check")
-async def check(ctx, *usernames: str):
+async def check(ctx, *mentions: discord.Member):
     # Vérification de l'heure
     current_time = datetime.now().time()
-    if current_time.hour >= 13:
-        await ctx.send("❌ Vous ne pouvez plus gagner de points aujourd'hui, la limite de 13h est passée.")
+    
+    # Convertir l'heure actuelle en minutes depuis minuit
+    current_minutes = current_time.hour * 60 + current_time.minute
+    
+    # Convertir les bornes horaires en minutes
+    start_time_minutes = 5 * 60 + 30  # 5h30 = 5 * 60 + 30
+    end_time_minutes = 14 * 60  # 14h00 = 14 * 60
+    
+    # Vérifier si l'heure actuelle est en dehors de la plage autorisée
+    if current_minutes < start_time_minutes or current_minutes >= end_time_minutes:
+        await ctx.send(f"❌ Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
         return
 
+    # Le reste de votre code de commande reste identique
     user_id = str(ctx.author.id)
     today = datetime.now().strftime("%Y-%m-%d")
     
@@ -161,16 +197,15 @@ async def check(ctx, *usernames: str):
         }
 
     # Vérifier et ajouter les timers pour chaque utilisateur mentionné
-    checked_users = []
+    checked_users = list(mentions)
     check_details = {}
 
-    for username in usernames:
-        user_to_check = discord.utils.get(ctx.guild.members, name=username)
-        
-        if user_to_check is None:
-            await ctx.send(f"Utilisateur @{username} non trouvé dans le serveur.")
-            continue
+    # Calcul des points pour celui qui tag
+    points_to_add = len(checked_users) * 50
+    user_data[user_id]["points"] += points_to_add
 
+    # Retirer des points aux utilisateurs taggés
+    for user_to_check in checked_users:
         user_to_check_id = str(user_to_check.id)
         
         # Initialiser les données de l'utilisateur vérifié
@@ -180,63 +215,27 @@ async def check(ctx, *usernames: str):
                 "last_claim": None, 
                 "scarlanat_timers": {}
             }
-
+        
+        user_data[user_to_check_id]["points"] -= 50
+        
         # Ajouter un timer spécifique pour cet utilisateur
         timer = datetime.now() + timedelta(minutes=30)
         user_data[user_id]["scarlanat_timers"][user_to_check_id] = timer
         
         # Stocker les détails du check
         check_details[user_to_check_id] = {
-            "username": username,
+            "username": user_to_check.name,
             "timer": timer
         }
-        
-        checked_users.append(user_to_check)
 
     # Message récapitulatif
     if checked_users:
-        users_mention = " ".join([f"<@{user.id}>" for user in checked_users])
-        await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}. S'ils répondent, ils gagneront 150 points. Sinon, <@{ctx.author.id}> gagnera 150 points!")
+        users_mention = " ".join([user.mention for user in checked_users])
+        await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}. " 
+                       f"<@{ctx.author.id}> gagne {points_to_add} points et les utilisateurs taggés perdent 50 points chacun!")
         save_points()
 
-    # Fonction de vérification des réponses
-    def check_response(response):
-        return (
-            response.author.id in [int(user_id) for user_id in check_details.keys()] and 
-            response.channel == ctx.channel
-        )
-
-    # Attente des réponses
-    try:
-        response = await bot.wait_for("message", timeout=1800, check=check_response)
-        
-        # Identifier l'utilisateur qui a répondu
-        responder_id = str(response.author.id)
-        
-        # Donner les points à l'utilisateur qui a répondu
-        user_data[responder_id]["points"] += 100
-        user_data[responder_id]["last_claim"] = today
-        
-        # Supprimer les timers
-        if user_id in user_data:
-            user_data[user_id]["scarlanat_timers"].clear()
-        
-        save_points()
-        
-        await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne 100 points ! Total: {user_data[responder_id]['points']} points")
-
-    except asyncio.TimeoutError:
-        # Si personne ne répond, donner les points à l'initiateur
-        user_data[user_id]["points"] += 70
-        user_data[user_id]["last_claim"] = today
-        
-        # Supprimer les timers
-        user_data[user_id]["scarlanat_timers"].clear()
-        
-        save_points()
-        
-        await ctx.send(f"🎉 <@{ctx.author.id}> a gagné 70 points car personne n'a répondu ! Total: {user_data[user_id]['points']} points")
-
+    # Reste du code identique...
 
 @bot.command(name="points")
 async def points(ctx):
