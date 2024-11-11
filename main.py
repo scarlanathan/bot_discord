@@ -1,15 +1,16 @@
-import discord
-from discord.ext import commands, tasks
+import discord # type: ignore
+from discord.ext import commands, tasks # type: ignore
 import json
 from datetime import datetime, timedelta
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv # type: ignore
 import asyncio
-import pymongo
-from pymongo import MongoClient
+import pymongo # type: ignore
+from pymongo import MongoClient # type: ignore
 from datetime import datetime
+import pytz
 from threading import Thread
-from pymongo.server_api import ServerApi
+from pymongo.server_api import ServerApi # type: ignore
 import certifi
 from keep_alive import keep_alive
 
@@ -20,7 +21,11 @@ GUILD_ID = os.getenv("GUILD_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
+# Définir le fuseau horaire français
+france_tz = pytz.timezone('Europe/Paris')
 
+# Obtenir l'heure actuelle dans le fuseau horaire français
+current_time = datetime.now(france_tz)
 
 try:
     mongodb_uri = os.getenv("MONGODB_URI")
@@ -169,8 +174,8 @@ async def wassimchien(ctx):
 
 @bot.command(name="check")
 async def check(ctx, *mentions: discord.Member):
-    # Vérification de l'heure
-    current_time = datetime.now().time()
+    # Utiliser le fuseau horaire français
+    current_time = datetime.now(france_tz)
     
     # Convertir l'heure actuelle en minutes depuis minuit
     current_minutes = current_time.hour * 60 + current_time.minute
