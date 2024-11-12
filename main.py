@@ -286,19 +286,6 @@ async def check(ctx, *mentions: discord.Member):
             non_responded_mentions = " ".join([user.mention for user in non_responded])
             await ctx.send(f"🎉 <@{ctx.author.id}> a gagné 70 points car {non_responded_mentions} n'ont pas répondu ! Total: {user_data[user_id]['points']} points")
             
-    except asyncio.TimeoutError:
-        # Liste des utilisateurs qui n'ont pas répondu
-        non_responded = [user for user in checked_users if user.id not in responded_users]
-        
-        if non_responded:
-            # Donner des points à l'initiateur
-            user_data[user_id]["points"] += 70
-            user_data[user_id]["last_claim"] = today
-            
-            # Message indiquant qui n'a pas répondu
-            non_responded_mentions = " ".join([user.mention for user in non_responded])
-            await ctx.send(f"🎉 <@{ctx.author.id}> a gagné 70 points car {non_responded_mentions} n'ont pas répondu ! Total: {user_data[user_id]['points']} points")
-            
     save_points()
     
     
