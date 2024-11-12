@@ -193,7 +193,6 @@ async def check(ctx, *mentions: discord.Member):
         await ctx.send(f"❌ Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
         return
 
-    # Le reste de votre code de commande reste identique
     user_id = str(ctx.author.id)
     today = datetime.now().strftime("%Y-%m-%d")
     
@@ -254,7 +253,7 @@ async def check(ctx, *mentions: discord.Member):
                 check=lambda m: (
                     m.author.id in [user.id for user in checked_users] and 
                     m.channel == ctx.channel and
-                    m.author.id not in [user.id for user in responded_users]
+                    m.author.id not in responded_users
                 )
             )
             
@@ -274,6 +273,19 @@ async def check(ctx, *mentions: discord.Member):
         # Si tous les utilisateurs ont répondu
         await ctx.send("Tous les utilisateurs mentionnés ont répondu !")
 
+    except asyncio.TimeoutError:
+        # Liste des utilisateurs qui n'ont pas répondu
+        non_responded = [user for user in checked_users if user.id not in responded_users]
+        
+        if non_responded:
+            # Donner des points à l'initiateur
+            user_data[user_id]["points"] += 70
+            user_data[user_id]["last_claim"] = today
+            
+            # Message indiquant qui n'a pas répondu
+            non_responded_mentions = " ".join([user.mention for user in non_responded])
+            await ctx.send(f"🎉 <@{ctx.author.id}> a gagné 70 points car {non_responded_mentions} n'ont pas répondu ! Total: {user_data[user_id]['points']} points")
+            
     except asyncio.TimeoutError:
         # Liste des utilisateurs qui n'ont pas répondu
         non_responded = [user for user in checked_users if user.id not in responded_users]
