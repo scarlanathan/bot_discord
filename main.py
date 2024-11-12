@@ -212,39 +212,10 @@ async def check(ctx, *mentions: discord.Member):
     checked_users = list(mentions)
     check_details = {}
 
-    # Retirer des points aux utilisateurs taggés
-    for user_to_check in checked_users:
-        user_to_check_id = str(user_to_check.id)
-        
-        # Initialisation COMPLETE des données de l'utilisateur vérifié
-        if user_to_check_id not in user_data:
-            user_data[user_to_check_id] = {
-                "points": 0, 
-                "last_claim": None, 
-                "scarlanat_timers": {}  # Initialisation explicite
-            }
-        
-        # Vérification et initialisation explicite de scarlanat_timers
-        if "scarlanat_timers" not in user_data[user_to_check_id]:
-            user_data[user_to_check_id]["scarlanat_timers"] = {}
-        
-        user_data[user_to_check_id]["points"] -= 50
-        
-        # Ajouter un timer spécifique pour cet utilisateur
-        timer = datetime.now() + timedelta(minutes=30)
-        user_data[user_id]["scarlanat_timers"][user_to_check_id] = timer
-        
-        # Stocker les détails du check
-        check_details[user_to_check_id] = {
-            "username": user_to_check.name,
-            "timer": timer
-        }
-
     # Message récapitulatif
     if checked_users:
         users_mention = " ".join([user.mention for user in checked_users])
-        await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}. " 
-                       f"Les utilisateurs taggés perdent 50 points chacun!")
+        await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}.")
         save_points()
         
     # Attente des réponses
@@ -287,9 +258,18 @@ async def check(ctx, *mentions: discord.Member):
             user_data[user_id]["points"] += points_earned
             user_data[user_id]["last_claim"] = today
             
+            # Retirer des points aux utilisateurs qui n'ont pas répondu
+            for user_to_check in non_responded:
+                user_to_check_id = str(user_to_check.id)
+                user_data[user_to_check_id]["points"] -= 50
+            
             # Message indiquant qui n'a pas répondu
             non_responded_mentions = " ".join([user.mention for user in non_responded])
             await ctx.send(f"🎉 <@{ctx.author.id}> a gagné {points_earned} points car {non_responded_mentions} n'ont pas répondu ! Total: {user_data[user_id]['points']} points")
+            
+            # Message pour les utilisateurs qui n'ont pas répondu
+            for user in non_responded:
+                await ctx.send(f"<@{user.id}> a perdu 50 points pour ne pas avoir répondu. Nouveau total : {user_data[str(user.id)]['points']} points")
             
     save_points()
     
