@@ -128,14 +128,18 @@ async def start_timer():
 async def wassimchien(ctx):
     user_id = str(ctx.author.id)
     
-    # Initialisation des données utilisateur avec les nouvelles variables de streak
+    # Initialisation complète des données utilisateur
     if user_id not in user_data:
         user_data[user_id] = {
             "points": 0,
             "last_claim": None,
-            "streak": 0,
+            "streak": 0,  # Assurez-vous que cette clé existe
             "last_streak_date": None
         }
+    
+    # Vérifiez que toutes les clés nécessaires existent
+    if "streak" not in user_data[user_id]:
+        user_data[user_id]["streak"] = 0
     
     aujourd_hui = datetime.now().strftime("%Y-%m-%d")
     hier = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -303,7 +307,46 @@ async def pompecheck(ctx):
     await ctx.send(f"{users_mention} Faites-moi 10 pompes, gros porc de gros sac")
 
 
-
+@bot.command(name="countercheck")
+async def countercheck(ctx):
+    user_id = str(ctx.author.id)
+    
+    # Vérifier si l'utilisateur a été précédemment check
+    if user_id not in user_data or "scarlanat_timers" not in user_data[user_id]:
+        await ctx.send("❌ Vous n'avez pas été check récemment !")
+        return
+    
+    # Vérifier s'il y a des timers actifs pour cet utilisateur
+    active_timers = user_data[user_id]["scarlanat_timers"]
+    if not active_timers:
+        await ctx.send("❌ Vous n'avez pas de check actif à contrer !")
+        return
+    
+    # Trouver l'utilisateur qui a initié le check
+    checkers = list(active_timers.keys())
+    if not checkers:
+        await ctx.send("❌ Impossible de trouver l'initiateur du check !")
+        return
+    
+    # Prendre le premier checker (dans le cas où il y aurait plusieurs checks)
+    checker_id = checkers[0]
+    
+    # Créer un nouveau timer de 10 minutes pour le checker
+    counter_timer = datetime.now() + timedelta(minutes=10)
+    
+    # Mettre à jour les timers
+    user_data[checker_id]["scarlanat_timers"][user_id] = counter_timer
+    
+    # Supprimer les anciens timers pour cet utilisateur
+    user_data[user_id]["scarlanat_timers"].clear()
+    
+    # Sauvegarder les modifications
+    save_points()
+    
+    # Mentionner le checker
+    await ctx.send(f"🚨 <@{checker_id}> Contre-check ! Vous avez 10 minutes pour répondre !")
+    
+    
 @bot.command(name="points")
 async def points(ctx):
     """Affiche vos points actuels"""
