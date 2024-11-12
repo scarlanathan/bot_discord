@@ -127,7 +127,7 @@ async def start_timer():
 @bot.command(name="wassimchien")
 async def wassimchien(ctx):
     user_id = str(ctx.author.id)
-    
+    load_points()
     # Initialisation complète des données utilisateur
     if user_id not in user_data:
         user_data[user_id] = {
