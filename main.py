@@ -196,13 +196,17 @@ async def check(ctx, *mentions: discord.Member):
     user_id = str(ctx.author.id)
     today = datetime.now().strftime("%Y-%m-%d")
     
-    # Initialisation des données utilisateur si nécessaire
+    # Initialisation COMPLETE des données utilisateur
     if user_id not in user_data:
         user_data[user_id] = {
             "points": 0, 
             "last_claim": None, 
-            "scarlanat_timers": {}
+            "scarlanat_timers": {}  # Initialisation explicite du dictionnaire
         }
+    
+    # Vérification et initialisation explicite de scarlanat_timers
+    if "scarlanat_timers" not in user_data[user_id]:
+        user_data[user_id]["scarlanat_timers"] = {}
 
     # Vérifier et ajouter les timers pour chaque utilisateur mentionné
     checked_users = list(mentions)
@@ -216,13 +220,17 @@ async def check(ctx, *mentions: discord.Member):
     for user_to_check in checked_users:
         user_to_check_id = str(user_to_check.id)
         
-        # Initialiser les données de l'utilisateur vérifié
+        # Initialisation COMPLETE des données de l'utilisateur vérifié
         if user_to_check_id not in user_data:
             user_data[user_to_check_id] = {
                 "points": 0, 
                 "last_claim": None, 
-                "scarlanat_timers": {}
+                "scarlanat_timers": {}  # Initialisation explicite
             }
+        
+        # Vérification et initialisation explicite de scarlanat_timers
+        if "scarlanat_timers" not in user_data[user_to_check_id]:
+            user_data[user_to_check_id]["scarlanat_timers"] = {}
         
         user_data[user_to_check_id]["points"] -= 50
         
