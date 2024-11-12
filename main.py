@@ -228,7 +228,7 @@ async def check(ctx, *mentions: discord.Member):
         if "scarlanat_timers" not in user_data[user_to_check_id]:
             user_data[user_to_check_id]["scarlanat_timers"] = {}
         
-        user_to_check_id["points"] -= 50
+        user_data[user_to_check_id]["points"] -= 50
         
         # Ajouter un timer spécifique pour cet utilisateur
         timer = datetime.now() + timedelta(minutes=30)
