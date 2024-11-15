@@ -132,7 +132,6 @@ async def wassimchien(ctx):
     if user_id not in user_data:
         user_data[user_id] = {
             "points": 0,
-            "last_claim": None,
             "streak": 0,  # Assurez-vous que cette clé existe
             "last_streak_date": None
         }
@@ -145,13 +144,13 @@ async def wassimchien(ctx):
     hier = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     
     # Logique de mise à jour du streak
-    if user_data[user_id]["last_claim"] is None:
+    if user_data[user_id]["last_streak_date"] is None:
         # Première utilisation
         user_data[user_id]["streak"] = 1
-    elif user_data[user_id]["last_claim"] == hier:
+    elif user_data[user_id]["last_streak_date"] == hier:
         # Streak continue
         user_data[user_id]["streak"] += 1
-    elif user_data[user_id]["last_claim"] == aujourd_hui:
+    elif user_data[user_id]["last_streak_date"] == aujourd_hui:
         # Déjà réclamé aujourd'hui
         await ctx.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
         return
@@ -166,7 +165,7 @@ async def wassimchien(ctx):
     
     # Mise à jour des données
     user_data[user_id]["points"] += points_totaux
-    user_data[user_id]["last_claim"] = aujourd_hui
+    user_data[user_id]["last_streak_date"] = aujourd_hui
     
     save_points()
     
@@ -236,14 +235,14 @@ async def check(ctx, *mentions: discord.Member):
             responder_id = str(response.author.id)
             
             # Donner les points à l'utilisateur qui a répondu
-            user_data[responder_id]["points"] += 100
+            user_data[responder_id]["points"] += 10
             user_data[responder_id]["last_claim"] = today
             
             # Ajouter l'utilisateur aux répondants
             responded_users.add(response.author.id)
             
             # Message de confirmation
-            await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne 100 points ! Total: {user_data[responder_id]['points']} points")
+            await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne 10 points ! Total: {user_data[responder_id]['points']} points")
         
         # Si tous les utilisateurs ont répondu
         await ctx.send("Tous les utilisateurs mentionnés ont répondu !")
@@ -254,14 +253,14 @@ async def check(ctx, *mentions: discord.Member):
         
         if non_responded:
             # Donner des points à l'initiateur pour chaque utilisateur qui n'a pas répondu
-            points_earned = len(non_responded) * 70
+            points_earned = len(non_responded) * 15
             user_data[user_id]["points"] += points_earned
             user_data[user_id]["last_claim"] = today
             
             # Retirer des points aux utilisateurs qui n'ont pas répondu
             for user_to_check in non_responded:
                 user_to_check_id = str(user_to_check.id)
-                user_data[user_to_check_id]["points"] -= 50
+                user_data[user_to_check_id]["points"] -= 10
             
             # Message indiquant qui n'a pas répondu
             non_responded_mentions = " ".join([user.mention for user in non_responded])
@@ -269,7 +268,7 @@ async def check(ctx, *mentions: discord.Member):
             
             # Message pour les utilisateurs qui n'ont pas répondu
             for user in non_responded:
-                await ctx.send(f"<@{user.id}> a perdu 50 points pour ne pas avoir répondu. Nouveau total : {user_data[str(user.id)]['points']} points")
+                await ctx.send(f"<@{user.id}> a perdu 10 points pour ne pas avoir répondu. Nouveau total : {user_data[str(user.id)]['points']} points")
             
     save_points()
     
@@ -294,6 +293,23 @@ async def pompecheck(ctx):
 @bot.command(name="countercheck")
 async def countercheck(ctx):
     user_id = str(ctx.author.id)
+    # Utiliser le fuseau horaire français
+    current_time = datetime.now(france_tz)
+    
+    # Convertir l'heure actuelle en minutes depuis minuit
+    current_minutes = current_time.hour * 60 + current_time.minute
+    
+    # Convertir les bornes horaires en minutes
+    start_time_minutes = 5 * 60 + 30  # 5h30 = 5 * 60 + 30
+    end_time_minutes = 14 * 60  # 14h00 = 14 * 60
+    
+    # Vérifier si l'heure actuelle est en dehors de la plage autorisée
+    if current_minutes < start_time_minutes or current_minutes >= end_time_minutes:
+        await ctx.send(f"❌ Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
+        return
+
+    user_id = str(ctx.author.id)
+    today = datetime.now().strftime("%Y-%m-%d")
     
     # Vérifier si l'utilisateur a été précédemment check
     if user_id not in user_data or "scarlanat_timers" not in user_data[user_id]:
@@ -383,6 +399,26 @@ async def classement(ctx):
         )
 
     await ctx.send(embed=embed)
+    
+@bot.command(name="reset")
+async def reset_points(ctx):
+    # Vérifier que seul @scrlnat peut utiliser la commande
+    if ctx.author.id != 660241424746545168:  # Vous devrez définir SCRLNAT_USER_ID
+        await ctx.send("❌ Vous n'avez pas la permission d'utiliser cette commande !")
+        return
+    
+    # Réinitialiser les points pour tous les utilisateurs
+    for user_id in user_data:
+        user_data[user_id]["points"] = 0
+        user_data[user_id]["streak"] = 0
+        user_data[user_id]["last_streak_date"] = None
+    
+    # Sauvegarder les modifications dans la base de données
+    save_points()
+    
+    # Confirmation
+    await ctx.send("✅ Tous les points ont été réinitialisés à zéro !")
+    
 
 @bot.command(name="bot-help")
 async def bot_help(ctx):
