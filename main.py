@@ -410,8 +410,6 @@ async def reset_points(ctx):
     # Réinitialiser les points pour tous les utilisateurs
     for user_id in user_data:
         user_data[user_id]["points"] = 0
-        user_data[user_id]["streak"] = 0
-        user_data[user_id]["last_streak_date"] = None
     
     # Sauvegarder les modifications dans la base de données
     save_points()
