@@ -461,8 +461,32 @@ async def bot_help(ctx):
     )
     
     embed.add_field(
-        name="scarlanat check",
-        value="Lancez un compteur de 30 minutes. Si @scarlanat répond, vous gagnez 70 points. Sinon, vous gagnez 150 points.",
+    name="🎲 !check",
+    value="""
+        **!check @utilisateur**
+        - Lance un défi à un utilisateur
+        - L'utilisateur ciblé a 30 minutes pour répondre
+        - Si réponse : +10 points pour le répondant
+        - Si pas de réponse : +15 points pour l'initiateur, -10 points pour le ciblé
+        """,
+        inline=False
+    )
+    
+    embed.add_field(
+    name="🎲 !countercheck",
+    value="""
+        **!countercheck**
+        - Déclenché uniquement si vous êtes ciblé par un !check
+        - Lance un contre-défi à l'initiateur du check
+        - L'initiateur a maintenant 10 minutes pour répondre
+        - Si pas de réponse : **PERTE DE TOUS SES POINTS**
+        """,
+        inline=False
+    )
+    
+    embed.add_field(
+        name="!pompecheck",
+        value="Demande a tout les utilisateurs en ligne de faire 10 pompes, toutes les personnes dans ce discord doivent le faire",
         inline=False
     )
     
