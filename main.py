@@ -195,6 +195,10 @@ async def check(ctx, *mentions: discord.Member):
     user_id = str(ctx.author.id)
     today = datetime.now().strftime("%Y-%m-%d")
     
+    if ctx.author in mentions:
+        await ctx.send("❌ Vous ne pouvez pas vous check vous-même !")
+        return
+    
     # Initialisation COMPLETE des données utilisateur
     if user_id not in user_data:
         user_data[user_id] = {
