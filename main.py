@@ -152,7 +152,7 @@ async def wassimchien(ctx):
         user_data[user_id]["streak"] += 1
     elif user_data[user_id]["last_streak_date"] == aujourd_hui:
         # Déjà réclamé aujourd'hui
-        await ctx.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
+        await ctx.send(":bonk: Vous avez déjà gagné vos points aujourd'hui !")
         return
     else:
         # Streak interrompu
@@ -189,14 +189,14 @@ async def check(ctx, *mentions: discord.Member):
     
     # Vérifier si l'heure actuelle est en dehors de la plage autorisée
     if current_minutes < start_time_minutes or current_minutes >= end_time_minutes:
-        await ctx.send(f"❌ Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
+        await ctx.send(f":bonk: Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
         return
 
     user_id = str(ctx.author.id)
     today = datetime.now().strftime("%Y-%m-%d")
     
     if ctx.author in mentions:
-        await ctx.send("❌ Vous ne pouvez pas vous check vous-même !")
+        await ctx.send(":bonk: Vous ne pouvez pas vous check vous-même !")
         return
     
     # Initialisation COMPLETE des données utilisateur
@@ -333,7 +333,7 @@ async def countercheck(ctx):
 
     # Si aucun check n'est trouvé
     if not initiator_id:
-        await ctx.send("Vous n'êtes pas actuellement dans un check.")
+        await ctx.send(":bonk: Vous n'êtes pas actuellement dans un check.")
         return
 
     # Créer un nouveau timer pour la réponse de l'initiateur
@@ -375,7 +375,7 @@ async def countercheck(ctx):
         points_before = user_data[initiator_id]["points"]
         user_data[initiator_id]["points"] = 0
         
-        await ctx.send(f"❌ <@{initiator_id}> n'a pas répondu à temps et perd tous ses points ! (Points perdus : {points_before})")
+        await ctx.send(f":bonk: <@{initiator_id}> n'a pas répondu à temps et perd tous ses points ! (Points perdus : {points_before})")
 
         # Supprimer le timer de countercheck
         if user_id in user_data[initiator_id]["scarlanat_timers"]:
