@@ -51,6 +51,9 @@ except Exception as e:
     print(f"Failed to connect to MongoDB: {e}")
     raise
 
+
+
+
 def save_points():
     for user_id, data in user_data.items():
         # Convertir les datetime en chaînes ISO
@@ -189,14 +192,14 @@ async def check(ctx, *mentions: discord.Member):
     
     # Vérifier si l'heure actuelle est en dehors de la plage autorisée
     if current_minutes < start_time_minutes or current_minutes >= end_time_minutes:
-        await ctx.send(f":bonk: Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
+        await ctx.send(f"❌ Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
         return
 
     user_id = str(ctx.author.id)
     today = datetime.now().strftime("%Y-%m-%d")
     
     if ctx.author in mentions:
-        await ctx.send(":bonk: Vous ne pouvez pas vous check vous-même !")
+        await ctx.send("❌ Vous ne pouvez pas vous check vous-même !")
         return
     
     # Initialisation COMPLETE des données utilisateur
@@ -213,7 +216,11 @@ async def check(ctx, *mentions: discord.Member):
 
     # Nettoyer les anciens timers avant de créer de nouveaux
     timers_to_remove = []
-    for checked_user_id, timer_info in user_data[user_id]["scarlanat_timers"].items():
+    for checked_user_id, timer_info in list(user_data[user_id]["scarlanat_timers"].items()):
+        # Assurez-vous que start_time est timezone-aware
+        if isinstance(timer_info["start_time"], datetime) and timer_info["start_time"].tzinfo is None:
+            timer_info["start_time"] = france_tz.localize(timer_info["start_time"])
+        
         # Vérifier si le timer a dépassé 30 minutes
         if (current_time - timer_info["start_time"]).total_seconds() > 1800:  # 30 minutes = 1800 secondes
             timers_to_remove.append(checked_user_id)
@@ -237,7 +244,7 @@ async def check(ctx, *mentions: discord.Member):
                 "initiator": user_id,
                 "type": "initial_check"  # Nouveau champ pour distinguer les types de checks
             }
-            
+    
     # Message récapitulatif
     if checked_users:
         users_mention = " ".join([user.mention for user in checked_users])
@@ -333,7 +340,7 @@ async def countercheck(ctx):
 
     # Si aucun check n'est trouvé
     if not initiator_id:
-        await ctx.send(":bonk: Vous n'êtes pas actuellement dans un check.")
+        await ctx.send("❌ Vous n'êtes pas actuellement dans un check.")
         return
 
     # Créer un nouveau timer pour la réponse de l'initiateur
@@ -375,7 +382,7 @@ async def countercheck(ctx):
         points_before = user_data[initiator_id]["points"]
         user_data[initiator_id]["points"] = 0
         
-        await ctx.send(f":bonk: <@{initiator_id}> n'a pas répondu à temps et perd tous ses points ! (Points perdus : {points_before})")
+        await ctx.send(f"❌ <@{initiator_id}> n'a pas répondu à temps et perd tous ses points ! (Points perdus : {points_before})")
 
         # Supprimer le timer de countercheck
         if user_id in user_data[initiator_id]["scarlanat_timers"]:
@@ -513,5 +520,7 @@ async def bot_help(ctx):
     )
 
     await ctx.send(embed=embed)
+
+
 
 bot.run(token)
