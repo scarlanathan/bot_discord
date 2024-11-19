@@ -155,7 +155,7 @@ async def wassimchien(ctx):
         user_data[user_id]["streak"] += 1
     elif user_data[user_id]["last_streak_date"] == aujourd_hui:
         # Déjà réclamé aujourd'hui
-        await ctx.send(":bonk: Vous avez déjà gagné vos points aujourd'hui !")
+        await ctx.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
         return
     else:
         # Streak interrompu
