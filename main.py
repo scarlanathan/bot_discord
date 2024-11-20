@@ -480,26 +480,7 @@ async def reset_points(ctx):
     # Confirmation
     await ctx.send("✅ Tous les points ont été réinitialisés à zéro !")
     
-bot.help_command = None 
-class MyHelpCommand(commands.HelpCommand):
-    async def send_bot_help(self, mapping):
-        # Personnaliser l'affichage de l'aide globale
-        embed = discord.Embed(title="Aide du Bot")
-        for cog, cmds in mapping.items():
-            embed.add_field(
-                name=cog.qualified_name if cog else "Sans Catégorie", 
-                value=f"{len(cmds)} commandes"
-            )
-        await self.get_destination().send(embed=embed)
-
-    async def send_command_help(self, command):
-        # Personnaliser l'aide pour une commande spécifique
-        embed = discord.Embed(
-            title=f"Aide pour {command.name}",
-            description=command.help or "Aucune description disponible"
-        )
-        await self.get_destination().send(embed=embed)
-
+bot.remove_command('help')
 
 
 @bot.command(name="help")
@@ -568,9 +549,5 @@ async def help(ctx):
     )
 
     await ctx.send(embed=embed)
-
-
-# Appliquer la commande help personnalisée
-bot.help_command = MyHelpCommand()
 
 bot.run(token)
