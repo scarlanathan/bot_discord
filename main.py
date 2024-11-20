@@ -351,6 +351,10 @@ async def countercheck(ctx):
             "scarlanat_timers": {}
         }
 
+    # Supprimer le timer initial qui a initié le check
+    if user_id in user_data[initiator_id]["scarlanat_timers"]:
+        del user_data[initiator_id]["scarlanat_timers"][user_id]
+
     # Ajouter un timer spécifique pour le countercheck
     user_data[initiator_id]["scarlanat_timers"][user_id] = {
         "start_time": datetime.now(france_tz),
@@ -401,6 +405,21 @@ async def points(ctx):
     else:
         await ctx.send("Vous n'avez pas encore de points !")
 
+@bot.command(name="watercheck")
+async def watercheck(ctx):
+    # Récupérer tous les membres connectés du serveur (hors bots)
+    connected_members = [member for member in ctx.guild.members if member.status != discord.Status.offline and not member.bot]
+    
+    # Vérifier s'il y a des membres connectés
+    if not connected_members:
+        await ctx.send("Aucun membre connecté à taguer !")
+        return
+
+    # Préparer la liste des membres à taguer
+    users_mention = " ".join([member.mention for member in connected_members])
+    
+    # Message de défi
+    await ctx.send(f"{users_mention} Allez boire de l'eau bandes de merde")
 
 
 @bot.command(name="classement")
@@ -462,8 +481,8 @@ async def reset_points(ctx):
     await ctx.send("✅ Tous les points ont été réinitialisés à zéro !")
     
 
-@bot.command(name="bot-help")
-async def bot_help(ctx):
+@bot.command(name="help")
+async def help(ctx):
     """Affiche l'aide du bot"""
     embed = discord.Embed(
         title="📖 Aide du Bot",
@@ -475,11 +494,10 @@ async def bot_help(ctx):
     name="🎲 !check",
     value="""
         **!check @utilisateur**
-        - Lance un défi à un utilisateur
-        - L'utilisateur ciblé a 30 minutes pour répondre
-        - Si réponse : +10 points pour le répondant
-        - Si pas de réponse : +15 points pour l'initiateur, -10 points pour le ciblé
-        """,
+- Lance un défi à un utilisateur
+- L'utilisateur ciblé a 30 minutes pour répondre
+- Si réponse : +10 points pour le répondant
+- Si pas de réponse : +15 points pour l'initiateur, -10 points pour le ciblé""",
         inline=False
     )
     
@@ -487,20 +505,28 @@ async def bot_help(ctx):
     name="🎲 !countercheck",
     value="""
         **!countercheck**
-        - Déclenché uniquement si vous êtes ciblé par un !check
-        - Lance un contre-défi à l'initiateur du check
-        - L'initiateur a maintenant 10 minutes pour répondre
-        - Si pas de réponse : **PERTE DE TOUS SES POINTS**
-        """,
+- Déclenché uniquement si vous êtes ciblé par un !check
+- Lance un contre-défi à l'initiateur du check
+- L'initiateur a maintenant 10 minutes pour répondre
+- Si pas de réponse : **PERTE DE TOUS SES POINTS**""",
         inline=False
     )
     
     embed.add_field(
         name="!pompecheck",
-        value="Demande a tout les utilisateurs en ligne de faire 10 pompes, toutes les personnes dans ce discord doivent le faire",
+        value="""Demande a tout les utilisateurs en ligne de faire 10 pompes, toutes les personnes dans ce discord doivent le faire
+Seules les personnes indiquées comme en ligne peuvent exiger de faire les pompes.
+Si une personne hors-ligne fait cette commande, elle doit faire 2 fois plus de pompes.""",
         inline=False
     )
     
+    embed.add_field(
+    name="!watercheck",
+    value="""Demande a tout les utilisateurs en ligne de boire une gorgée d'eau. C'est bien de s'hydrater toute les demi-heure ahah.
+    Devient un monstre de puissance tel RiadhOFG""",
+    inline=False
+    )
+
     embed.add_field(
         name="!points",
         value="Voir votre nombre de points actuel",
@@ -514,7 +540,7 @@ async def bot_help(ctx):
     )
     
     embed.add_field(
-        name="!bot-help",
+        name="!help",
         value="Afficher ce message d'aide",
         inline=False
     )
