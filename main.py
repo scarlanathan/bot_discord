@@ -500,8 +500,7 @@ class MyHelpCommand(commands.HelpCommand):
         )
         await self.get_destination().send(embed=embed)
 
-# Appliquer la commande help personnalisée
-bot.help_command = MyHelpCommand()
+
 
 @bot.command(name="help")
 async def help(ctx):
@@ -536,16 +535,17 @@ async def help(ctx):
     
     embed.add_field(
         name="!pompecheck",
-        value="""Demande a tout les utilisateurs en ligne de faire 10 pompes, toutes les personnes dans ce discord doivent le faire
-Seules les personnes indiquées comme en ligne peuvent exiger à une autre personne de faire les pompes.
-Si une personne hors-ligne fait cette commande, elle doit faire 2 fois plus de pompes.""",
+        value="""- Demande a tout les utilisateurs en ligne de faire 10 pompes, toutes les personnes dans ce discord doivent le faire
+- Seules les personnes indiquées comme en ligne peuvent exiger à une autre personne de faire les pompes.
+- Si une personne hors-ligne fait cette commande, elle doit faire 2 fois plus de pompes.""",
         inline=False
     )
     
     embed.add_field(
     name="!watercheck",
-    value="""Demande a tout les utilisateurs en ligne de boire une gorgée d'eau. C'est bien de s'hydrater toute les demi-heure ahah.
-Devient un monstre de puissance tel RiadhOFG""",
+    value="""- Demande a tout les utilisateurs en ligne de boire une gorgée d'eau.
+- C'est bien de s'hydrater toute les demi-heure ahah.
+- Devient un monstre de puissance tel RiadhOFG""",
     inline=False
     )
 
@@ -570,5 +570,7 @@ Devient un monstre de puissance tel RiadhOFG""",
     await ctx.send(embed=embed)
 
 
+# Appliquer la commande help personnalisée
+bot.help_command = MyHelpCommand()
 
 bot.run(token)
