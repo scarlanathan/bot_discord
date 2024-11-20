@@ -480,6 +480,7 @@ async def reset_points(ctx):
     # Confirmation
     await ctx.send("✅ Tous les points ont été réinitialisés à zéro !")
     
+bot.help_command = None 
 
 @bot.command(name="help")
 async def help(ctx):
