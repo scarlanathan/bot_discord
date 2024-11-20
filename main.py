@@ -481,6 +481,27 @@ async def reset_points(ctx):
     await ctx.send("✅ Tous les points ont été réinitialisés à zéro !")
     
 bot.help_command = None 
+class MyHelpCommand(commands.HelpCommand):
+    async def send_bot_help(self, mapping):
+        # Personnaliser l'affichage de l'aide globale
+        embed = discord.Embed(title="Aide du Bot")
+        for cog, cmds in mapping.items():
+            embed.add_field(
+                name=cog.qualified_name if cog else "Sans Catégorie", 
+                value=f"{len(cmds)} commandes"
+            )
+        await self.get_destination().send(embed=embed)
+
+    async def send_command_help(self, command):
+        # Personnaliser l'aide pour une commande spécifique
+        embed = discord.Embed(
+            title=f"Aide pour {command.name}",
+            description=command.help or "Aucune description disponible"
+        )
+        await self.get_destination().send(embed=embed)
+
+# Appliquer la commande help personnalisée
+bot.help_command = MyHelpCommand()
 
 @bot.command(name="help")
 async def help(ctx):
@@ -516,7 +537,7 @@ async def help(ctx):
     embed.add_field(
         name="!pompecheck",
         value="""Demande a tout les utilisateurs en ligne de faire 10 pompes, toutes les personnes dans ce discord doivent le faire
-Seules les personnes indiquées comme en ligne peuvent exiger de faire les pompes.
+Seules les personnes indiquées comme en ligne peuvent exiger à une autre personne de faire les pompes.
 Si une personne hors-ligne fait cette commande, elle doit faire 2 fois plus de pompes.""",
         inline=False
     )
@@ -524,7 +545,7 @@ Si une personne hors-ligne fait cette commande, elle doit faire 2 fois plus de p
     embed.add_field(
     name="!watercheck",
     value="""Demande a tout les utilisateurs en ligne de boire une gorgée d'eau. C'est bien de s'hydrater toute les demi-heure ahah.
-    Devient un monstre de puissance tel RiadhOFG""",
+Devient un monstre de puissance tel RiadhOFG""",
     inline=False
     )
 
