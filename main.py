@@ -176,8 +176,8 @@ async def wassimchien(ctx):
     await ctx.send(f"🎉 Vous avez gagné {points_totaux} points (100 points de base + {bonus_streak} points de streak) !" 
                    f"\nVotre streak actuel est de {user_data[user_id]['streak']} jours !" 
                    f"\nTotal de points : {user_data[user_id]['points']} points")
-
-
+    
+    
 @bot.command(name="check")
 async def check(ctx, *mentions: discord.Member):
     # Utiliser le fuseau horaire français
@@ -242,7 +242,8 @@ async def check(ctx, *mentions: discord.Member):
             user_data[user_id]["scarlanat_timers"][user_check_id] = {
                 "start_time": current_time,
                 "initiator": user_id,
-                "type": "initial_check"  # Nouveau champ pour distinguer les types de checks
+                "type": "initial_check",
+                "responded": False  # Nouveau champ pour suivre la réponse
             }
     
     # Message récapitulatif
@@ -267,6 +268,13 @@ async def check(ctx, *mentions: discord.Member):
             
             # Identifier l'utilisateur qui a répondu
             responder_id = str(response.author.id)
+            responder = response.author
+            
+            # Marquer le timer comme répondu
+            for timer_user, timer_info in user_data[user_id]["scarlanat_timers"].items():
+                if str(responder.id) == timer_user:
+                    timer_info["responded"] = True
+                    break
             
             # Donner les points à l'utilisateur qui a répondu
             user_data[responder_id]["points"] += 10
@@ -321,79 +329,85 @@ async def pompecheck(ctx):
     
     # Message de défi
     await ctx.send(f"{users_mention} Faites-moi 10 pompes, gros porc de gros sac")
-
+    
+    
 @bot.command(name="countercheck")
 async def countercheck(ctx):
     # Vérifier si l'utilisateur est actuellement dans un check
     user_id = str(ctx.author.id)
-    initiator_id = None
+    initiators = []
 
-    # Parcourir tous les utilisateurs pour trouver le check en cours
+    # Parcourir tous les utilisateurs pour trouver les checks en cours
     for user, user_data_entry in user_data.items():
         if "scarlanat_timers" in user_data_entry:
-            for checked_user, timer_info in user_data_entry["scarlanat_timers"].items():
-                if checked_user == user_id:
-                    initiator_id = user
-                    break
-            if initiator_id:
-                break
+            for checked_user, check_timer_info in user_data_entry["scarlanat_timers"].items():
+                # Vérifier si le timer est encore valide et n'a pas déjà été répondu
+                if (checked_user == user_id and 
+                    check_timer_info.get("type") == "initial_check" and 
+                    not check_timer_info.get("responded", False)):
+                    initiators.append(user)
 
     # Si aucun check n'est trouvé
-    if not initiator_id:
-        await ctx.send("❌ Vous n'êtes pas actuellement dans un check.")
+    if not initiators:
+        await ctx.send("❌ Vous n'êtes pas actuellement dans un check valide.")
         return
 
-    # Créer un nouveau timer pour la réponse de l'initiateur
-    if initiator_id not in user_data:
-        user_data[initiator_id] = {
-            "points": 0, 
-            "last_claim": None, 
-            "scarlanat_timers": {}
+    # Traiter tous les initiateurs
+    for initiator_id in initiators:
+        # Créer un nouveau timer pour la réponse de l'initiateur
+        if initiator_id not in user_data:
+            user_data[initiator_id] = {
+                "points": 0, 
+                "last_claim": None, 
+                "scarlanat_timers": {}
+            }
+
+        # Supprimer le timer initial qui a initié le check
+        if user_id in user_data[initiator_id]["scarlanat_timers"]:
+            del user_data[initiator_id]["scarlanat_timers"][user_id]
+
+        # Ajouter un timer spécifique pour le countercheck
+        user_data[initiator_id]["scarlanat_timers"][user_id] = {
+            "start_time": datetime.now(france_tz),
+            "type": "countercheck",
+            "status": "waiting_response"
         }
 
-    # Supprimer le timer initial qui a initié le check
-    if user_id in user_data[initiator_id]["scarlanat_timers"]:
-        del user_data[initiator_id]["scarlanat_timers"][user_id]
-
-    # Ajouter un timer spécifique pour le countercheck
-    user_data[initiator_id]["scarlanat_timers"][user_id] = {
-        "start_time": datetime.now(france_tz),
-        "type": "countercheck",
-        "status": "waiting_response"
-    }
-
-    # Envoyer un message à l'initiateur
-    await ctx.send(f"<@{initiator_id}> a maintenant 10 minutes pour répondre avant de perdre tous ses points !")
+        # Envoyer un message à l'initiateur
+        await ctx.send(f"<@{initiator_id}> a maintenant 10 minutes pour répondre avant de perdre tous ses points !")
 
     try:
-        # Attendre la réponse de l'initiateur
+        # Attendre la réponse des initiateurs
         response = await bot.wait_for(
             "message", 
             timeout=600,  # 10 minutes
             check=lambda m: (
-                m.author.id == int(initiator_id) and 
+                m.author.id in [int(initiator) for initiator in initiators] and 
                 m.channel == ctx.channel
             )
         )
         
         # Marquer le countercheck comme réussi
-        user_data[initiator_id]["scarlanat_timers"][user_id]["status"] = "responded"
-        await ctx.send(f"🎉 <@{initiator_id}> a répondu à temps !")
+        responder_id = str(response.author.id)
+        user_data[responder_id]["scarlanat_timers"][user_id]["status"] = "responded"
+        await ctx.send(f"🎉 <@{response.author.id}> a répondu à temps !")
 
     except asyncio.TimeoutError:
-        # L'initiateur n'a pas répondu dans les 10 minutes
-        # Réinitialiser ses points
-        points_before = user_data[initiator_id]["points"]
-        user_data[initiator_id]["points"] = 0
-        
-        await ctx.send(f"❌ <@{initiator_id}> n'a pas répondu à temps et perd tous ses points ! (Points perdus : {points_before})")
+        # Les initiateurs n'ont pas répondu dans les 10 minutes
+        for initiator_id in initiators:
+            # Réinitialiser ses points
+            points_before = user_data[initiator_id]["points"]
+            user_data[initiator_id]["points"] = 0
+            
+            await ctx.send(f"❌ <@{initiator_id}> n'a pas répondu à temps et perd tous ses points ! (Points perdus : {points_before})")
 
-        # Supprimer le timer de countercheck
-        if user_id in user_data[initiator_id]["scarlanat_timers"]:
-            del user_data[initiator_id]["scarlanat_timers"][user_id]
+            # Supprimer le timer de countercheck
+            if user_id in user_data[initiator_id]["scarlanat_timers"]:
+                del user_data[initiator_id]["scarlanat_timers"][user_id]
 
     # Sauvegarder les modifications
-    save_points()
+    save_points()    
+    
     
 @bot.command(name="points")
 async def points(ctx):
