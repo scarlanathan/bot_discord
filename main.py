@@ -320,7 +320,22 @@ async def check(ctx, *mentions: discord.Member):
             # Message pour les utilisateurs qui n'ont pas répondu
             for user in non_responded:
                 await ctx.send(f"<@{user.id}> a perdu 10 points pour ne pas avoir répondu. Nouveau total : {user_data[str(user.id)]['points']} points")
-            
+        
+            # Nettoyer les anciens timers avant de traiter les non-répondants
+        timers_to_remove = []
+        for checked_user_id, timer_info in list(user_data[user_id]["scarlanat_timers"].items()):
+            # Vérifier si le timer a dépassé 30 minutes
+            if (current_time - timer_info["start_time"]).total_seconds() > 1800:  # 30 minutes = 1800 secondes
+                timers_to_remove.append(checked_user_id)
+                timer_info["responded"] = True  # Marquer explicitement comme répondu
+        
+        # Supprimer les timers expirés
+        for timer_id in timers_to_remove:
+            del user_data[user_id]["scarlanat_timers"][timer_id]
+
+        # Liste des utilisateurs qui n'ont pas répondu
+        non_responded = [user for user in checked_users if user.id not in responded_users]
+        
     save_points()
     
 @bot.command(name="pompecheck")
