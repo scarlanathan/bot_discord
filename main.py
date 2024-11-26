@@ -221,6 +221,11 @@ async def check(ctx, *mentions: discord.Member):
     if user_data.get(user_id, {}).get('points', 0) < 0:
         await ctx.send(f"❌ {ctx.author.mention}, vous ne pouvez pas utiliser cette commande car vous avez des points négatifs.")
         return
+    
+    # Vérifier si le bot est dans les mentions
+    if bot.user in mentions:
+        await ctx.send("❌ Vous ne pouvez pas check le bot !")
+        return
 
     # Utiliser le fuseau horaire français
     current_time = datetime.now(france_tz)
