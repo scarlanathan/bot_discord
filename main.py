@@ -21,6 +21,39 @@ GUILD_ID = os.getenv("GUILD_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
+
+
+async def check_validity(user_id):
+    initiators = []
+    valid_checks = []
+    current_time = datetime.now(france_tz)
+
+    # Recherche de tous les checks valides pour l'utilisateur
+    for user, user_data_entry in user_data.items():
+        if "scarlanat_timers" in user_data_entry:
+            for checked_user, check_timer_info in list(user_data_entry["scarlanat_timers"].items()):
+                if (checked_user == user_id and 
+                    check_timer_info.get("type") == "initial_check" and 
+                    not check_timer_info.get("responded", False)):
+                    
+                    start_time = check_timer_info["start_time"]
+                    if isinstance(start_time, str):
+                        start_time = datetime.fromisoformat(start_time)
+                    
+                    # Convertir start_time en timezone-aware si nécessaire
+                    if start_time.tzinfo is None:
+                        start_time = france_tz.localize(start_time)
+                    
+                    # Vérification du timer
+                    if (current_time - start_time).total_seconds() <= 1800:  # 30 minutes
+                        initiators.append(user)
+                        valid_checks.append({
+                            'initiator': user, 
+                            'timer_info': check_timer_info
+                        })
+
+    return initiators, valid_checks
+
 # Définir le fuseau horaire français
 france_tz = pytz.timezone('Europe/Paris')
 
