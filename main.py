@@ -31,11 +31,10 @@ async def check_validity(user_id):
     # Recherche de tous les checks valides pour l'utilisateur
     for user, user_data_entry in user_data.items():
         if "scarlanat_timers" in user_data_entry:
+            # Créer une copie de la liste des timers pour éviter les modifications pendant l'itération
+            timers_to_remove = []
             for checked_user, check_timer_info in list(user_data_entry["scarlanat_timers"].items()):
-                if (checked_user == user_id and 
-                    check_timer_info.get("type") == "initial_check" and 
-                    not check_timer_info.get("responded", False)):
-                    
+                if checked_user == user_id:
                     start_time = check_timer_info["start_time"]
                     if isinstance(start_time, str):
                         start_time = datetime.fromisoformat(start_time)
@@ -45,12 +44,23 @@ async def check_validity(user_id):
                         start_time = france_tz.localize(start_time)
                     
                     # Vérification du timer
-                    if (current_time - start_time).total_seconds() <= 1800:  # 30 minutes
-                        initiators.append(user)
-                        valid_checks.append({
-                            'initiator': user, 
-                            'timer_info': check_timer_info
-                        })
+                    timer_duration = (current_time - start_time).total_seconds()
+                    
+                    if timer_duration <= 1800:  # 30 minutes
+                        if (check_timer_info.get("type") == "initial_check" and 
+                            not check_timer_info.get("responded", False)):
+                            initiators.append(user)
+                            valid_checks.append({
+                                'initiator': user, 
+                                'timer_info': check_timer_info
+                            })
+                    else:
+                        # Ajouter à la liste des timers à supprimer
+                        timers_to_remove.append(checked_user)
+            
+            # Supprimer les timers expirés
+            for timer_id in timers_to_remove:
+                del user_data_entry["scarlanat_timers"][timer_id]
 
     return initiators, valid_checks
 
