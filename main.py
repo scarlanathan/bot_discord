@@ -410,7 +410,7 @@ async def pompecheck(ctx):
     # Envoyer le message global
     await ctx.send(" ".join(challenge_messages))
     
-@bot.command(name="countercheck")
+@bot.command(name="countercheck", aliases=["cc"])
 async def countercheck(ctx):
     # Initialisation des variables
     user_id = str(ctx.author.id)
