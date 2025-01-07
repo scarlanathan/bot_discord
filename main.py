@@ -160,7 +160,7 @@ async def start_timer():
                     if channel:
                         await channel.send(f"⚠️ Impossible de contacter l'utilisateur {user_id} pour le timer 'scarlanat check'.")
 
-@bot.command(name="wassimchien")
+@bot.command(name="wassimchien", aliases=["wc"])
 async def wassimchien(ctx):
     user_id = str(ctx.author.id)
     load_points()
