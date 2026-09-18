@@ -707,7 +707,7 @@ async def points(ctx):
         message += "\n⚠️ Points négatifs : vous ne pouvez pas lancer de !check."
     await ctx.send(message)
 
-@bot.command(name="watercheck")
+@bot.command(name="watercheck", aliases=["eau", "water"])
 async def watercheck(ctx):
     # Récupérer tous les membres connectés du serveur (hors bots)
     connected_members = [member for member in ctx.guild.members if member.status != discord.Status.offline and not member.bot]
@@ -821,7 +821,7 @@ async def help(ctx):
     )
 
     embed.add_field(
-    name="🎲 !countercheck",
+    name="🎲 !countercheck (!cc)",
     value=f"""
         **!countercheck**
 - Déclenché uniquement si vous êtes ciblé par un !check en cours
@@ -832,15 +832,16 @@ async def help(ctx):
     )
     
     embed.add_field(
-        name="!pompecheck",
-        value="""- Demande a tout les utilisateurs en ligne de faire 10 pompes, toutes les personnes dans ce discord doivent le faire
+        name="💪 !pompecheck",
+        value=f"""- Demande a tout les utilisateurs en ligne de faire des pompes, toutes les personnes dans ce discord doivent le faire
+- Le nombre dépend de vos points : {POMPES_TIERS[0][1]} pompes sous {POMPES_TIERS[0][0]} points, jusqu'à {POMPES_MAX} au-delà de {POMPES_TIERS[-1][0]}
 - Seules les personnes indiquées comme en ligne peuvent exiger à une autre personne de faire les pompes.
 - Si une personne hors-ligne fait cette commande, elle doit faire 2 fois plus de pompes.""",
         inline=False
     )
-    
+
     embed.add_field(
-    name="!watercheck",
+    name="💧 !watercheck (!eau, !water)",
     value="""- Demande a tout les utilisateurs en ligne de boire une gorgée d'eau.
 - C'est bien de s'hydrater toute les demi-heure ahah.
 - Devient un monstre de puissance tel RiadhOFG""",
@@ -848,19 +849,19 @@ async def help(ctx):
     )
 
     embed.add_field(
-        name="!points",
-        value="Voir votre nombre de points actuel",
+        name="💰 !points",
+        value="Voir votre nombre de points, votre streak et vos éventuels malus",
         inline=False
     )
-    
+
     embed.add_field(
-        name="!classement",
+        name="🏆 !classement",
         value="Voir le top 10 des joueurs",
         inline=False
     )
-    
+
     embed.add_field(
-        name="!help",
+        name="📖 !help",
         value="Afficher ce message d'aide",
         inline=False
     )

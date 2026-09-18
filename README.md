@@ -94,7 +94,7 @@ Préfixe : `!`
 | `!check @utilisateur` | Lance un défi ; la cible a 30 min pour répondre |
 | `!countercheck` (`!cc`) | Contre-défi quand on est ciblé ; l'initiateur a 10 min |
 | `!pompecheck` | Demande des pompes à tous les membres en ligne (selon leurs points) |
-| `!watercheck` | Demande à tout le monde de boire une gorgée d'eau |
+| `!watercheck` (`!eau`, `!water`) | Demande à tout le monde de boire une gorgée d'eau |
 | `!points` | Affiche vos points, votre streak et vos éventuels malus |
 | `!classement` | Top 10 des joueurs |
 | `!reset` | Remet points, streaks et timers à zéro (réservé au propriétaire du bot) |
