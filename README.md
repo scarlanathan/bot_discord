@@ -90,15 +90,55 @@ Préfixe : `!`
 
 | Commande | Description |
 | --- | --- |
-| `!wassimchien` (`!wc`) | Points quotidiens : 100 points + bonus de streak (max +100) |
+| `!wassimchien` (`!wc`) | Points quotidiens : 60 points + bonus de streak (max +90) |
 | `!check @utilisateur` | Lance un défi ; la cible a 30 min pour répondre |
 | `!countercheck` (`!cc`) | Contre-défi quand on est ciblé ; l'initiateur a 10 min |
-| `!pompecheck` | Demande 10 pompes à tous les membres en ligne |
+| `!pompecheck` | Demande des pompes à tous les membres en ligne (selon leurs points) |
 | `!watercheck` | Demande à tout le monde de boire une gorgée d'eau |
-| `!points` | Affiche vos points |
+| `!points` | Affiche vos points, votre streak et vos éventuels malus |
 | `!classement` | Top 10 des joueurs |
-| `!reset` | Remet tous les points à zéro (réservé au propriétaire du bot) |
+| `!reset` | Remet points, streaks et timers à zéro (réservé au propriétaire du bot) |
 | `!help` | Affiche l'aide dans Discord |
+
+## Système de points
+
+Toutes les valeurs d'équilibrage sont regroupées dans un bloc de constantes en
+haut de `main.py` : il n'y a rien d'autre à modifier dans le fichier pour
+retoucher le jeu.
+
+| Constante | Valeur | Effet |
+| --- | --- | --- |
+| `DAILY_BASE_POINTS` | 60 | Points de base du `!wc` quotidien |
+| `DAILY_STREAK_BONUS` | 10 | Bonus par jour consécutif |
+| `DAILY_STREAK_BONUS_MAX` | 90 | Plafond du bonus (atteint au 9e jour) |
+| `CHECK_WINDOW` | 1800 s | Délai laissé à la cible d'un `!check` |
+| `CHECK_RESPONSE_REWARD` | 15 | Gagné par la cible qui répond |
+| `CHECK_TIMEOUT_REWARD` | 25 | Gagné par l'initiateur, par cible silencieuse |
+| `CHECK_TIMEOUT_PENALTY` | 20 | Perdu par une cible qui n'a pas répondu |
+| `CHECK_MAX_TARGETS` | 5 | Cibles maximum par `!check` |
+| `CHECK_TARGET_COOLDOWN` | 3600 s | Délai avant de re-checker la même personne |
+| `COUNTERCHECK_WINDOW` | 600 s | Délai laissé à l'initiateur contre-attaqué |
+| `COUNTERCHECK_PENALTY_RATE` | 0.25 | Part des points perdus s'il ne répond pas |
+| `COUNTERCHECK_PENALTY_MIN` | 50 | Perte plancher du `!countercheck` |
+| `POINTS_FLOOR` | -100 | Plancher global : les points ne descendent pas plus bas |
+| `POMPES_TIERS` | 600/1500/3000 | Seuils de points → 10/20/30 pompes (40 au-delà) |
+| `TIMER_REMINDER_BEFORE` | 300 s | Rappel en MP avant l'expiration d'un timer |
+| `TIMER_CHECK_INTERVAL` | 30 s | Fréquence de la boucle de surveillance |
+
+Règles annexes :
+
+- Un `!check` ne peut être lancé qu'entre 5h30 et 14h (heure de Paris), et pas
+  par un joueur dont le solde est négatif.
+- Le compte à rebours d'un `!check` est commun à toutes les cibles : une réponse
+  ne relance pas le délai des autres.
+- Le `!countercheck` n'est valide que sur un `!check` en cours auquel vous
+  n'avez pas encore répondu.
+- Une tâche de fond prévient en MP (ou sur `CHANNEL_ID` si les MP sont fermés)
+  5 minutes avant l'expiration d'un timer, une seule fois par timer, et purge
+  les timers laissés par un redémarrage du bot. Elle ne modifie jamais les
+  points elle-même : c'est la commande qui attribue gains et pénalités.
+- `GUILD_ID` doit être un ID valide pour que les rappels fonctionnent ; sinon le
+  bot le signale au démarrage et se contente de désactiver les rappels.
 
 ## Structure
 

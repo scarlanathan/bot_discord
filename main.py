@@ -16,46 +16,129 @@ from keep_alive import keep_alive
 
 
 load_dotenv()
+
+
+def _env_int(name):
+    """Les IDs Discord doivent être des entiers : `get_guild("123")` renvoie None."""
+    value = os.getenv(name)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        print(f"⚠️ {name} absent ou invalide : les rappels de timer seront désactivés.")
+        return None
+
+
 token = os.getenv("DISCORD_TOKEN")
-GUILD_ID = os.getenv("GUILD_ID")
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+GUILD_ID = _env_int("GUILD_ID")
+CHANNEL_ID = _env_int("CHANNEL_ID")
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
 
+# Définir le fuseau horaire français
+france_tz = pytz.timezone('Europe/Paris')
+
+# ---------------------------------------------------------------------------
+# Configuration du système de points
+# Toutes les valeurs d'équilibrage sont regroupées ici : pour ajuster le jeu,
+# il suffit de modifier ces constantes, rien d'autre dans le fichier.
+# ---------------------------------------------------------------------------
+
+# !wassimchien — récompense quotidienne
+DAILY_BASE_POINTS = 60          # points de base pour la réclamation du jour
+DAILY_STREAK_BONUS = 10         # bonus par jour consécutif de streak
+DAILY_STREAK_BONUS_MAX = 90     # plafond du bonus de streak (atteint au 9e jour)
+
+# !check — défi lancé à d'autres membres
+CHECK_WINDOW = 1800             # 30 min : délai laissé à la cible pour répondre
+CHECK_RESPONSE_REWARD = 15      # gagné par la cible qui répond à temps
+CHECK_TIMEOUT_REWARD = 25       # gagné par l'initiateur, par cible silencieuse
+CHECK_TIMEOUT_PENALTY = 20      # perdu par une cible qui n'a pas répondu
+CHECK_MAX_TARGETS = 5           # nombre max de cibles par commande (anti-farm)
+CHECK_TARGET_COOLDOWN = 3600    # 1 h avant de pouvoir re-checker la même cible
+CHECK_START_MINUTES = 5 * 60 + 30   # plage horaire autorisée : 5h30…
+CHECK_END_MINUTES = 14 * 60         # …jusqu'à 14h00
+
+# !countercheck — contre-défi de la cible vers l'initiateur
+COUNTERCHECK_WINDOW = 600           # 10 min pour que l'initiateur réagisse
+COUNTERCHECK_PENALTY_RATE = 0.25    # part des points perdus s'il ne répond pas
+COUNTERCHECK_PENALTY_MIN = 50       # perte plancher, même avec peu de points
+
+# Plancher global : les points ne descendent jamais en dessous
+POINTS_FLOOR = -100
+
+# Surveillance des timers en arrière-plan
+TIMER_CHECK_INTERVAL = 30       # fréquence de la boucle de surveillance
+TIMER_REMINDER_BEFORE = 300     # rappel en MP 5 min avant la fin du délai
+TIMER_CLEANUP_GRACE = 60        # marge avant de purger un timer expiré
+
+# !pompecheck — paliers (seuil de points, nombre de pompes)
+POMPES_TIERS = [(600, 10), (1500, 20), (3000, 30)]
+POMPES_MAX = 40                 # au-delà du dernier palier
+
+# Données en mémoire, rechargées depuis MongoDB au démarrage
+user_data = {}
+
+
+def ensure_user(user_id):
+    """Garantit qu'un utilisateur existe avec toutes ses clés, et le renvoie."""
+    user_id = str(user_id)
+    entry = user_data.setdefault(user_id, {})
+    entry.setdefault("points", 0)
+    entry.setdefault("streak", 0)
+    entry.setdefault("last_streak_date", None)
+    entry.setdefault("last_claim", None)
+    entry.setdefault("scarlanat_timers", {})
+    entry.setdefault("check_cooldowns", {})
+    return entry
+
+
+def add_points(user_id, delta):
+    """Ajoute (ou retire) des points en respectant le plancher global.
+
+    Renvoie la variation réellement appliquée, qui peut être plus petite que
+    `delta` si le plancher est atteint.
+    """
+    entry = ensure_user(user_id)
+    before = entry["points"]
+    entry["points"] = max(POINTS_FLOOR, before + delta)
+    return entry["points"] - before
+
+
+def get_points(user_id):
+    return user_data.get(str(user_id), {}).get("points", 0)
+
+
+def to_aware(value):
+    """Normalise une date stockée (str ou datetime naïf) en datetime France."""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if value.tzinfo is None:
+        value = pytz.utc.localize(value).astimezone(france_tz)
+    return value.astimezone(france_tz)
 
 
 async def check_validity(user_id):
+    """Renvoie les checks en cours, encore valides, ciblant `user_id`."""
     initiators = []
     valid_checks = []
     current_time = datetime.now(france_tz)
 
     for user, user_data_entry in user_data.items():
-        if "scarlanat_timers" in user_data_entry:
-            for checked_user, check_timer_info in list(user_data_entry["scarlanat_timers"].items()):
-                if checked_user == user_id:
-                    start_time = check_timer_info["start_time"]
-                    
-                    # Convertir en datetime si nécessaire
-                    if isinstance(start_time, str):
-                        start_time = datetime.fromisoformat(start_time)
-                    
-                    # Assurer que start_time est timezone-aware
-                    if start_time.tzinfo is None:
-                        start_time = france_tz.localize(start_time)
-                    
-                    # Vérifier la durée du timer
-                    timer_duration = (current_time - start_time).total_seconds()
-                    
-                    if timer_duration <= 1800:  # 30 minutes
-                        initiators.append(user)
-                        valid_checks.append({
-                            'initiator': user, 
-                            'timer_info': check_timer_info
-                        })
+        for checked_user, check_timer_info in list(user_data_entry.get("scarlanat_timers", {}).items()):
+            if (checked_user != str(user_id)
+                    or check_timer_info.get("type") != "initial_check"
+                    or check_timer_info.get("responded", False)):
+                continue
+
+            start_time = to_aware(check_timer_info["start_time"])
+
+            if (current_time - start_time).total_seconds() <= CHECK_WINDOW:
+                initiators.append(user)
+                valid_checks.append({
+                    'initiator': user,
+                    'timer_info': check_timer_info
+                })
 
     return initiators, valid_checks
-
-# Définir le fuseau horaire français
-france_tz = pytz.timezone('Europe/Paris')
 
 # Obtenir l'heure actuelle dans le fuseau horaire français
 current_time = datetime.now(france_tz)
@@ -87,16 +170,49 @@ except Exception as e:
 
 
 
+def _serialize_timers(timers):
+    """Les timers sont des dicts imbriqués : on sérialise leurs dates en ISO."""
+    serialized = {}
+    for checked_user, timer_info in timers.items():
+        if isinstance(timer_info, dict):
+            timer_info = {
+                key: value.isoformat() if isinstance(value, datetime) else value
+                for key, value in timer_info.items()
+            }
+        elif isinstance(timer_info, datetime):
+            timer_info = timer_info.isoformat()
+        serialized[checked_user] = timer_info
+    return serialized
+
+
+def _deserialize_timers(timers):
+    """Inverse de `_serialize_timers` : remet des datetime conscients du fuseau."""
+    restored = {}
+    for checked_user, timer_info in timers.items():
+        if isinstance(timer_info, dict) and "start_time" in timer_info:
+            timer_info = dict(timer_info)
+            timer_info["start_time"] = to_aware(timer_info["start_time"])
+        elif isinstance(timer_info, (str, datetime)):
+            timer_info = to_aware(timer_info)
+        restored[checked_user] = timer_info
+    return restored
+
+
 def save_points():
     for user_id, data in user_data.items():
         # Convertir les datetime en chaînes ISO
         serializable_data = data.copy()
+        serializable_data.pop('_id', None)  # champ immuable, jamais dans un $set
         if "scarlanat_timers" in serializable_data:
-            serializable_data["scarlanat_timers"] = {
-                k: v.isoformat() if isinstance(v, datetime) else v 
-                for k, v in serializable_data["scarlanat_timers"].items()
+            serializable_data["scarlanat_timers"] = _serialize_timers(
+                serializable_data["scarlanat_timers"]
+            )
+        if "check_cooldowns" in serializable_data:
+            serializable_data["check_cooldowns"] = {
+                k: v.isoformat() if isinstance(v, datetime) else v
+                for k, v in serializable_data["check_cooldowns"].items()
             }
-        
+
         users_collection.update_one(
             {'_id': user_id},
             {'$set': serializable_data},
@@ -107,15 +223,17 @@ def load_points():
     global user_data
     try:
         user_data = {doc['_id']: doc for doc in users_collection.find()}
-        
-        # Reconvertir les timers en datetime
-        for user_id in user_data:
-            if "scarlanat_timers" in user_data[user_id]:
-                user_data[user_id]["scarlanat_timers"] = {
-                    k: datetime.fromisoformat(v) if isinstance(v, str) else v
-                    for k, v in user_data[user_id]["scarlanat_timers"].items()
-                }
-    
+
+        # Reconvertir les timers en datetime et compléter les clés manquantes
+        for user_id in list(user_data):
+            entry = ensure_user(user_id)
+            entry["scarlanat_timers"] = _deserialize_timers(entry["scarlanat_timers"])
+            entry["check_cooldowns"] = {
+                k: to_aware(v) for k, v in entry["check_cooldowns"].items()
+            }
+            # Appliquer le plancher aux soldes hérités d'avant son introduction
+            entry["points"] = max(POINTS_FLOOR, entry["points"])
+
     except pymongo.errors.ServerSelectionTimeoutError as e:
         print(f"Failed to connect to MongoDB: {e}")
         user_data = {}
@@ -124,91 +242,159 @@ def load_points():
         user_data = {}
 
 
-@bot.event
-async def on_ready():
-    print(f'{bot.user} est connecté !')
-    load_points()
-    start_timer.start()
-    keep_alive()
-
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime):
             return obj.isoformat()
         return super().default(obj)
 
+
+# `on_ready` est rejoué à chaque reconnexion : on ne réinitialise qu'une fois,
+# sinon on écrase `user_data` sous les commandes en cours et on relance Flask
+# sur un port déjà pris.
+_initialise = False
+
+
 @bot.event
 async def on_ready():
+    global _initialise
     print(f'{bot.user} est connecté !')
-    load_points()
-    start_timer.start()
-    keep_alive()
 
-@tasks.loop(seconds=10)
+    if _initialise:
+        return
+
+    load_points()
+    if not start_timer.is_running():
+        start_timer.start()
+    keep_alive()
+    _initialise = True
+
+
+async def notify_timer(guild, user_id, timer_type, time_left):
+    """Prévient un joueur en MP de l'échéance ; à défaut, sur le salon de repli."""
+    minutes = max(1, round(time_left / 60))
+    if timer_type == "countercheck":
+        message = (f"⏱️ Il vous reste environ {minutes} min pour répondre au countercheck, "
+                   f"sinon vous perdez {int(COUNTERCHECK_PENALTY_RATE * 100)} % de vos points "
+                   f"(au moins {COUNTERCHECK_PENALTY_MIN}).")
+    else:
+        message = (f"⏱️ Il vous reste environ {minutes} min pour répondre au check, "
+                   f"sinon vous perdez {CHECK_TIMEOUT_PENALTY} points.")
+
+    member = None
+    if guild:
+        member = guild.get_member(int(user_id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(int(user_id))
+            except discord.HTTPException:
+                member = None
+
+    if member:
+        try:
+            await member.send(message)
+            return
+        except discord.HTTPException:
+            pass  # MP fermés : on bascule sur le salon de repli
+
+    channel = bot.get_channel(CHANNEL_ID) if CHANNEL_ID else None
+    if channel:
+        await channel.send(f"<@{user_id}> {message}")
+    else:
+        print(f"Impossible de prévenir {user_id} de l'expiration de son timer.")
+
+
+@tasks.loop(seconds=TIMER_CHECK_INTERVAL)
 async def start_timer():
-    for user_id, data in user_data.items():
-        if "scarlanat_timer" in data and data["scarlanat_timer"] is not None:
-            time_left = data["scarlanat_timer"] - datetime.now()
-            if time_left.total_seconds() > 0:
-                guild = bot.get_guild(GUILD_ID)
-                if guild:
-                    member = await guild.get_member(int(user_id))
-                    if member:
-                        await member.send(f"⏱️ Vous avez encore {round(time_left.total_seconds())} secondes avant de pouvoir utiliser à nouveau la commande 'scarlanat check'.")
-                else:
-                    channel = bot.get_channel(CHANNEL_ID)
-                    if channel:
-                        await channel.send(f"⚠️ Impossible de contacter l'utilisateur {user_id} pour le timer 'scarlanat check'.")
+    """Rappelle aux joueurs qu'un timer approche de son terme, et purge les
+    timers laissés derrière par un redémarrage du bot."""
+    current_time = datetime.now(france_tz)
+    guild = bot.get_guild(GUILD_ID) if GUILD_ID else None
+    dirty = False
+
+    # Copies : les commandes modifient `user_data` pendant que la boucle tourne
+    for initiator_id, data in list(user_data.items()):
+        timers = data.get("scarlanat_timers", {})
+        for target_id, timer_info in list(timers.items()):
+            if not isinstance(timer_info, dict) or "start_time" not in timer_info:
+                continue
+
+            timer_type = timer_info.get("type", "initial_check")
+            window = COUNTERCHECK_WINDOW if timer_type == "countercheck" else CHECK_WINDOW
+            time_left = window - (current_time - to_aware(timer_info["start_time"])).total_seconds()
+
+            # Purge des timers expirés. La marge laisse la commande encore en
+            # vol attribuer ses points avant qu'on n'efface son timer ; la
+            # boucle ne touche donc jamais aux points elle-même.
+            if time_left <= -TIMER_CLEANUP_GRACE:
+                del timers[target_id]
+                dirty = True
+                continue
+
+            if timer_info.get("responded") or timer_info.get("status") == "responded":
+                continue
+
+            # Sur un countercheck, c'est l'initiateur du check qui doit répondre
+            waiting_id = initiator_id if timer_type == "countercheck" else target_id
+
+            # Un seul rappel, à l'approche de l'échéance
+            if 0 < time_left <= TIMER_REMINDER_BEFORE and not timer_info.get("reminded"):
+                timer_info["reminded"] = True
+                dirty = True
+                await notify_timer(guild, waiting_id, timer_type, time_left)
+
+    if dirty:
+        save_points()
+
+
+@start_timer.before_loop
+async def before_start_timer():
+    await bot.wait_until_ready()
+
+
+@start_timer.error
+async def start_timer_error(error):
+    # Une exception non gérée arrêterait définitivement la boucle en silence
+    print(f"Erreur dans la surveillance des timers : {error}")
+    if not start_timer.is_running():
+        start_timer.start()
 
 @bot.command(name="wassimchien", aliases=["wc"])
 async def wassimchien(ctx):
     user_id = str(ctx.author.id)
-    load_points()
-    # Initialisation complète des données utilisateur
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "points": 0,
-            "streak": 0,  # Assurez-vous que cette clé existe
-            "last_streak_date": None
-        }
-    
-    # Vérifiez que toutes les clés nécessaires existent
-    if "streak" not in user_data[user_id]:
-        user_data[user_id]["streak"] = 0
-    
-    aujourd_hui = datetime.now().strftime("%Y-%m-%d")
-    hier = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    
+    entry = ensure_user(user_id)
+
+    # Les dates de streak suivent le fuseau français, comme le reste du bot
+    maintenant = datetime.now(france_tz)
+    aujourd_hui = maintenant.strftime("%Y-%m-%d")
+    hier = (maintenant - timedelta(days=1)).strftime("%Y-%m-%d")
+
     # Logique de mise à jour du streak
-    if user_data[user_id]["last_streak_date"] is None:
-        # Première utilisation
-        user_data[user_id]["streak"] = 1
-    elif user_data[user_id]["last_streak_date"] == hier:
-        # Streak continue
-        user_data[user_id]["streak"] += 1
-    elif user_data[user_id]["last_streak_date"] == aujourd_hui:
+    if entry["last_streak_date"] == aujourd_hui:
         # Déjà réclamé aujourd'hui
         await ctx.send("❌ Vous avez déjà gagné vos points aujourd'hui !")
         return
+    elif entry["last_streak_date"] == hier:
+        # Streak continue
+        entry["streak"] += 1
     else:
-        # Streak interrompu
-        user_data[user_id]["streak"] = 1
-    
+        # Première utilisation ou streak interrompu
+        entry["streak"] = 1
+
     # Calcul des points avec bonus de streak
-    points_base = 100
-    bonus_streak = min(user_data[user_id]["streak"] * 10, 100)  # Bonus max de 100 points
-    points_totaux = points_base + bonus_streak
-    
+    bonus_streak = min(entry["streak"] * DAILY_STREAK_BONUS, DAILY_STREAK_BONUS_MAX)
+    points_totaux = DAILY_BASE_POINTS + bonus_streak
+
     # Mise à jour des données
-    user_data[user_id]["points"] += points_totaux
-    user_data[user_id]["last_streak_date"] = aujourd_hui
-    
+    add_points(user_id, points_totaux)
+    entry["last_streak_date"] = aujourd_hui
+
     save_points()
-    
+
     # Message avec information de streak
-    await ctx.send(f"🎉 Vous avez gagné {points_totaux} points (100 points de base + {bonus_streak} points de streak) !" 
-                   f"\nVotre streak actuel est de {user_data[user_id]['streak']} jours !" 
-                   f"\nTotal de points : {user_data[user_id]['points']} points")
+    await ctx.send(f"🎉 Vous avez gagné {points_totaux} points ({DAILY_BASE_POINTS} points de base + {bonus_streak} points de streak) !"
+                   f"\nVotre streak actuel est de {entry['streak']} jours !"
+                   f"\nTotal de points : {entry['points']} points")
     
     
 @bot.command(name="check")
@@ -229,151 +415,158 @@ async def check(ctx, *mentions: discord.Member):
 
     # Utiliser le fuseau horaire français
     current_time = datetime.now(france_tz)
-    
+
     # Convertir l'heure actuelle en minutes depuis minuit
     current_minutes = current_time.hour * 60 + current_time.minute
-    
-    # Convertir les bornes horaires en minutes
-    start_time_minutes = 5 * 60 + 30  # 5h30 = 5 * 60 + 30
-    end_time_minutes = 14 * 60  # 14h00 = 14 * 60
-    
+
     # Vérifier si l'heure actuelle est en dehors de la plage autorisée
-    if current_minutes < start_time_minutes or current_minutes >= end_time_minutes:
+    if current_minutes < CHECK_START_MINUTES or current_minutes >= CHECK_END_MINUTES:
         await ctx.send(f"❌ Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
         return
 
-    user_id = str(ctx.author.id)
-    today = datetime.now().strftime("%Y-%m-%d")
-    
+    today = current_time.strftime("%Y-%m-%d")
+
     if ctx.author in mentions:
         await ctx.send("❌ Vous ne pouvez pas vous check vous-même !")
         return
-    
-    # Initialisation COMPLETE des données utilisateur
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "points": 0, 
-            "last_claim": None, 
-            "scarlanat_timers": {}  # Initialisation explicite du dictionnaire
-        }
-    
-    # Vérification et initialisation explicite de scarlanat_timers
-    if "scarlanat_timers" not in user_data[user_id]:
-        user_data[user_id]["scarlanat_timers"] = {}
 
-    # Nettoyer les anciens timers avant de créer de nouveaux
-    timers_to_remove = []
-    for checked_user_id, timer_info in list(user_data[user_id]["scarlanat_timers"].items()):
-        # Assurez-vous que start_time est timezone-aware
-        if isinstance(timer_info["start_time"], datetime) and timer_info["start_time"].tzinfo is None:
-            timer_info["start_time"] = france_tz.localize(timer_info["start_time"])
-        
-        # Vérifier si le timer a dépassé 30 minutes
-        if (current_time - timer_info["start_time"]).total_seconds() > 1800:  # 30 minutes = 1800 secondes
-            timers_to_remove.append(checked_user_id)
-    
-    # Supprimer les timers expirés
-    for timer_id in timers_to_remove:
-        del user_data[user_id]["scarlanat_timers"][timer_id]
+    initiator = ensure_user(user_id)
 
-    # Vérifier et ajouter les timers pour chaque utilisateur mentionné
-    checked_users = list(mentions)
-    
-    # Ajouter un nouveau mécanisme pour gérer les timers
+    # Nettoyer les anciens timers avant d'en créer de nouveaux
+    for checked_user_id, timer_info in list(initiator["scarlanat_timers"].items()):
+        timer_info["start_time"] = to_aware(timer_info["start_time"])
+        if (current_time - timer_info["start_time"]).total_seconds() > CHECK_WINDOW:
+            del initiator["scarlanat_timers"][checked_user_id]
+
+    # Dédoublonner les mentions en gardant l'ordre, et écarter les bots
+    checked_users = []
+    for user in mentions:
+        if user.bot or user in checked_users:
+            continue
+        checked_users.append(user)
+
+    # Anti-farm : on ne peut pas re-checker la même personne en boucle
+    on_cooldown = []
+    available_users = []
+    for user in checked_users:
+        last_check = initiator["check_cooldowns"].get(str(user.id))
+        if last_check is not None:
+            elapsed = (current_time - to_aware(last_check)).total_seconds()
+            if elapsed < CHECK_TARGET_COOLDOWN:
+                on_cooldown.append((user, int((CHECK_TARGET_COOLDOWN - elapsed) // 60) + 1))
+                continue
+        available_users.append(user)
+
+    if on_cooldown:
+        details = ", ".join(f"{user.mention} (encore {minutes} min)" for user, minutes in on_cooldown)
+        await ctx.send(f"⏳ Vous avez déjà check récemment : {details}")
+
+    if not available_users:
+        return
+
+    # Anti-farm : plafonner le nombre de cibles d'un même check
+    if len(available_users) > CHECK_MAX_TARGETS:
+        await ctx.send(f"⚠️ Maximum {CHECK_MAX_TARGETS} cibles par check : seules les {CHECK_MAX_TARGETS} premières sont retenues.")
+        available_users = available_users[:CHECK_MAX_TARGETS]
+
+    checked_users = available_users
+
+    # Créer le timer de chaque cible et poser son cooldown
     for user in checked_users:
         user_check_id = str(user.id)
-        
-        # Vérifier si un timer existe déjà pour cet utilisateur
-        if user_check_id not in user_data[user_id]["scarlanat_timers"]:
-            # Créer un nouveau timer uniquement s'il n'existe pas déjà
-            user_data[user_id]["scarlanat_timers"][user_check_id] = {
+        ensure_user(user_check_id)
+        initiator["check_cooldowns"][user_check_id] = current_time
+
+        # Créer un nouveau timer uniquement s'il n'existe pas déjà
+        if user_check_id not in initiator["scarlanat_timers"]:
+            initiator["scarlanat_timers"][user_check_id] = {
                 "start_time": current_time,
                 "initiator": user_id,
                 "type": "initial_check",
                 "responded": False  # Nouveau champ pour suivre la réponse
             }
-    
+
     # Message récapitulatif
-    if checked_users:
-        users_mention = " ".join([user.mention for user in checked_users])
-        await ctx.send(f"Un compteur de 30 minutes a été lancé pour {users_mention}.")
-        save_points()
-        
-    # Attente des réponses
+    users_mention = " ".join([user.mention for user in checked_users])
+    await ctx.send(
+        f"Un compteur de {CHECK_WINDOW // 60} minutes a été lancé pour {users_mention}.\n"
+        f"Répondre = +{CHECK_RESPONSE_REWARD} points, se taire = -{CHECK_TIMEOUT_PENALTY} points."
+    )
+    save_points()
+
+    # Attente des réponses : l'échéance est fixe, une réponse ne relance pas
+    # le compteur des autres cibles
+    deadline = current_time + timedelta(seconds=CHECK_WINDOW)
     responded_users = set()
     try:
         while len(responded_users) < len(checked_users):
+            remaining = (deadline - datetime.now(france_tz)).total_seconds()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+
             response = await bot.wait_for(
-                "message", 
-                timeout=1800,  # 30 minutes
+                "message",
+                timeout=remaining,
                 check=lambda m: (
-                    m.author.id in [user.id for user in checked_users] and 
+                    m.author.id in [user.id for user in checked_users] and
                     m.channel == ctx.channel and
                     m.author.id not in responded_users
                 )
             )
-            
+
             # Identifier l'utilisateur qui a répondu
             responder_id = str(response.author.id)
-            responder = response.author
-            
+            responder = ensure_user(responder_id)
+
             # Marquer le timer comme répondu
-            for timer_user, timer_info in user_data[user_id]["scarlanat_timers"].items():
-                if str(responder.id) == timer_user:
-                    timer_info["responded"] = True
-                    break
-            
+            timer_info = initiator["scarlanat_timers"].get(responder_id)
+            if timer_info:
+                timer_info["responded"] = True
+
             # Donner les points à l'utilisateur qui a répondu
-            user_data[responder_id]["points"] += 10
-            user_data[responder_id]["last_claim"] = today
-            
+            gained = add_points(responder_id, CHECK_RESPONSE_REWARD)
+            responder["last_claim"] = today
+
             # Ajouter l'utilisateur aux répondants
             responded_users.add(response.author.id)
-            
+            save_points()
+
             # Message de confirmation
-            await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne 10 points ! Total: {user_data[responder_id]['points']} points")
-        
+            await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne {gained} points ! Total: {responder['points']} points")
+
         # Si tous les utilisateurs ont répondu
         await ctx.send("Tous les utilisateurs mentionnés ont répondu !")
 
     except asyncio.TimeoutError:
         # Liste des utilisateurs qui n'ont pas répondu
         non_responded = [user for user in checked_users if user.id not in responded_users]
-        
+
         if non_responded:
-            # Donner des points à l'initiateur pour chaque utilisateur qui n'a pas répondu
-            points_earned = len(non_responded) * 15
-            user_data[user_id]["points"] += points_earned
-            user_data[user_id]["last_claim"] = today
-            
+            # Donner des points à l'initiateur pour chaque utilisateur silencieux
+            points_earned = add_points(user_id, len(non_responded) * CHECK_TIMEOUT_REWARD)
+            initiator["last_claim"] = today
+
             # Retirer des points aux utilisateurs qui n'ont pas répondu
+            losses = {}
             for user_to_check in non_responded:
-                user_to_check_id = str(user_to_check.id)
-                user_data[user_to_check_id]["points"] -= 10
-            
+                losses[user_to_check.id] = -add_points(user_to_check.id, -CHECK_TIMEOUT_PENALTY)
+
             # Message indiquant qui n'a pas répondu
             non_responded_mentions = " ".join([user.mention for user in non_responded])
-            await ctx.send(f"🎉 <@{ctx.author.id}> a gagné {points_earned} points car {non_responded_mentions} n'ont pas répondu ! Total: {user_data[user_id]['points']} points")
-            
+            await ctx.send(f"🎉 <@{ctx.author.id}> a gagné {points_earned} points car {non_responded_mentions} n'ont pas répondu ! Total: {initiator['points']} points")
+
             # Message pour les utilisateurs qui n'ont pas répondu
             for user in non_responded:
-                await ctx.send(f"<@{user.id}> a perdu 10 points pour ne pas avoir répondu. Nouveau total : {user_data[str(user.id)]['points']} points")
-        
-            # Nettoyer les anciens timers avant de traiter les non-répondants
-        timers_to_remove = []
-        for checked_user_id, timer_info in list(user_data[user_id]["scarlanat_timers"].items()):
-            # Vérifier si le timer a dépassé 30 minutes
-            if (current_time - timer_info["start_time"]).total_seconds() > 1800:  # 30 minutes = 1800 secondes
-                timers_to_remove.append(checked_user_id)
-                timer_info["responded"] = True  # Marquer explicitement comme répondu
-        
-        # Supprimer les timers expirés
-        for timer_id in timers_to_remove:
-            del user_data[user_id]["scarlanat_timers"][timer_id]
+                perdu = losses[user.id]
+                if perdu:
+                    await ctx.send(f"<@{user.id}> a perdu {perdu} points pour ne pas avoir répondu. Nouveau total : {get_points(user.id)} points")
+                else:
+                    await ctx.send(f"<@{user.id}> n'a pas répondu, mais est déjà au plancher de {POINTS_FLOOR} points.")
 
-        # Liste des utilisateurs qui n'ont pas répondu
-        non_responded = [user for user in checked_users if user.id not in responded_users]
-        
+    # Nettoyer les timers de ce check, quel que soit le dénouement
+    for user in checked_users:
+        initiator["scarlanat_timers"].pop(str(user.id), None)
+
     save_points()
     
 @bot.command(name="pompecheck")
@@ -393,18 +586,15 @@ async def pompecheck(ctx):
         user_id = str(member.id)
         
         # Récupérer les points de l'utilisateur
-        points = user_data.get(user_id, {}).get("points", 0)
-        
-        # Déterminer le nombre de pompes
-        if points < 1000:
-            pompes = 10
-        elif 1000 <= points < 2000:
-            pompes = 20
-        elif 2000 <= points < 3000:
-            pompes = 30
-        else:
-            pompes = 40
-        
+        points = get_points(user_id)
+
+        # Déterminer le nombre de pompes selon les paliers configurés
+        pompes = POMPES_MAX
+        for seuil, nombre in POMPES_TIERS:
+            if points < seuil:
+                pompes = nombre
+                break
+
         challenge_messages.append(f"{member.mention} Faites-moi {pompes} pompes, gros porc de gros sac !")
     
     # Envoyer le message global
@@ -416,8 +606,10 @@ async def countercheck(ctx):
     user_id = str(ctx.author.id)
     current_time = datetime.now(france_tz)
 
+    ensure_user(user_id)
+
     # Utiliser la fonction check_validity pour obtenir les checks valides
-    initiators, valid_checks = await check_validity(user_id)
+    _, valid_checks = await check_validity(user_id)
 
     # Si aucun check valide
     if not valid_checks:
@@ -427,64 +619,72 @@ async def countercheck(ctx):
     # Traitement de chaque check
     for check in valid_checks:
         initiator_id = check['initiator']
-        
-        # Gestion du timer de countercheck
-        if initiator_id not in user_data:
-            user_data[initiator_id] = {
-                "points": 0, 
-                "last_claim": None, 
-                "scarlanat_timers": {}
-            }
+        initiator = ensure_user(initiator_id)
 
         # Création du timer de countercheck
-        user_data[initiator_id]["scarlanat_timers"][user_id] = {
+        initiator["scarlanat_timers"][user_id] = {
             "start_time": current_time,
             "type": "countercheck",
             "status": "waiting_response"
         }
 
-        await ctx.send(f"<@{initiator_id}> a maintenant 10 minutes pour répondre avant de perdre tous ses points !")
+        await ctx.send(
+            f"<@{initiator_id}> a maintenant {COUNTERCHECK_WINDOW // 60} minutes pour répondre, "
+            f"sinon il perd {int(COUNTERCHECK_PENALTY_RATE * 100)} % de ses points "
+            f"(au moins {COUNTERCHECK_PENALTY_MIN}) !"
+        )
 
-    # Attente des réponses
+    save_points()
+
+    # Attente des réponses : échéance commune à tous les initiateurs
+    deadline = current_time + timedelta(seconds=COUNTERCHECK_WINDOW)
+    responses = []
     try:
-        responses = []
         for _ in range(len(valid_checks)):
+            remaining = (deadline - datetime.now(france_tz)).total_seconds()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+
             response = await bot.wait_for(
-                "message", 
-                timeout=600,  # 10 minutes
+                "message",
+                timeout=remaining,
                 check=lambda m: (
-                    m.author.id in [int(check['initiator']) for check in valid_checks] and 
+                    m.author.id in [int(check['initiator']) for check in valid_checks] and
                     m.channel == ctx.channel and
                     m.author.id not in [r.author.id for r in responses]
                 )
             )
             responses.append(response)
-            
+
             # Marquer le countercheck comme réussi
             responder_id = str(response.author.id)
-            for check in valid_checks:
-                if str(check['initiator']) == responder_id:
-                    user_data[responder_id]["scarlanat_timers"][user_id]["status"] = "responded"
+            timer_info = ensure_user(responder_id)["scarlanat_timers"].get(user_id)
+            if timer_info:
+                timer_info["status"] = "responded"
             await ctx.send(f"🎉 <@{response.author.id}> a répondu à temps !")
 
     except asyncio.TimeoutError:
         # Gestion des non-répondants
+        responded_ids = {str(r.author.id) for r in responses}
         non_respondents = [
-            check['initiator'] for check in valid_checks 
-            if str(check['initiator']) not in [str(r.author.id) for r in responses]
+            check['initiator'] for check in valid_checks
+            if str(check['initiator']) not in responded_ids
         ]
 
         for initiator_id in non_respondents:
-            points_before = user_data[initiator_id]["points"]
-            user_data[initiator_id]["points"] = 0
-            
-            await ctx.send(f"❌ <@{initiator_id}> n'a pas répondu à temps et perd tous ses points ! (Points perdus : {points_before})")
+            points_before = get_points(initiator_id)
+            # Pénalité proportionnelle, avec un minimum, et bornée par le plancher
+            penalite = max(COUNTERCHECK_PENALTY_MIN, int(points_before * COUNTERCHECK_PENALTY_RATE))
+            perdu = -add_points(initiator_id, -penalite)
 
-        # Nettoyage des timers
-        for check in valid_checks:
-            initiator_id = check['initiator']
-            if user_id in user_data[initiator_id]["scarlanat_timers"]:
-                del user_data[initiator_id]["scarlanat_timers"][user_id]
+            await ctx.send(
+                f"❌ <@{initiator_id}> n'a pas répondu à temps et perd {perdu} points ! "
+                f"({points_before} → {get_points(initiator_id)})"
+            )
+
+    # Nettoyage des timers du countercheck
+    for check in valid_checks:
+        ensure_user(check['initiator'])["scarlanat_timers"].pop(user_id, None)
 
     save_points()
     
@@ -493,11 +693,19 @@ async def countercheck(ctx):
 async def points(ctx):
     """Affiche vos points actuels"""
     user_id = str(ctx.author.id)
-    if user_id in user_data:
-        points = user_data[user_id]["points"]
-        await ctx.send(f"💰 Vous avez {points} points !")
-    else:
+    if user_id not in user_data:
         await ctx.send("Vous n'avez pas encore de points !")
+        return
+
+    entry = ensure_user(user_id)
+    message = f"💰 Vous avez {entry['points']} points !"
+    if entry["streak"]:
+        message += f"\n🔥 Streak : {entry['streak']} jour(s)"
+    if entry["points"] <= POINTS_FLOOR:
+        message += f"\n⚠️ Vous êtes au plancher ({POINTS_FLOOR}) : faites !wc pour remonter."
+    elif entry["points"] < 0:
+        message += "\n⚠️ Points négatifs : vous ne pouvez pas lancer de !check."
+    await ctx.send(message)
 
 @bot.command(name="watercheck")
 async def watercheck(ctx):
@@ -526,7 +734,7 @@ async def classement(ctx):
             if membre:
                 classement.append({
                     "nom": membre.display_name,
-                    "points": data["points"]
+                    "points": data.get("points", 0)
                 })
         except discord.NotFound:
             continue
@@ -564,10 +772,15 @@ async def reset_points(ctx):
         await ctx.send("❌ Vous n'avez pas la permission d'utiliser cette commande !")
         return
     
-    # Réinitialiser les points pour tous les utilisateurs
-    for user_id in user_data:
-        user_data[user_id]["points"] = 0
-    
+    # Réinitialiser les points, streaks, timers et cooldowns de tout le monde
+    for user_id in list(user_data):
+        entry = ensure_user(user_id)
+        entry["points"] = 0
+        entry["streak"] = 0
+        entry["last_streak_date"] = None
+        entry["scarlanat_timers"] = {}
+        entry["check_cooldowns"] = {}
+
     # Sauvegarder les modifications dans la base de données
     save_points()
     
@@ -587,24 +800,34 @@ async def help(ctx):
     )
     
     embed.add_field(
-    name="🎲 !check",
-    value="""
-        **!check @utilisateur**
-- Lance un défi à un utilisateur
-- L'utilisateur ciblé a 30 minutes pour répondre
-- Si réponse : +10 points pour le répondant
-- Si pas de réponse : +15 points pour l'initiateur, -10 points pour le ciblé""",
+    name="🗓️ !wassimchien (!wc)",
+    value=f"""
+- Récompense quotidienne : {DAILY_BASE_POINTS} points de base
+- + {DAILY_STREAK_BONUS} points par jour de streak (plafond {DAILY_STREAK_BONUS_MAX})
+- Un jour manqué remet le streak à 1""",
         inline=False
     )
-    
+
+    embed.add_field(
+    name="🎲 !check",
+    value=f"""
+        **!check @utilisateur**
+- Lance un défi à un utilisateur (entre 5h30 et 14h)
+- L'utilisateur ciblé a {CHECK_WINDOW // 60} minutes pour répondre
+- Si réponse : +{CHECK_RESPONSE_REWARD} points pour le répondant
+- Si pas de réponse : +{CHECK_TIMEOUT_REWARD} points pour l'initiateur, -{CHECK_TIMEOUT_PENALTY} points pour le ciblé
+- Max {CHECK_MAX_TARGETS} cibles, et {CHECK_TARGET_COOLDOWN // 60} min de cooldown avant de re-checker la même personne""",
+        inline=False
+    )
+
     embed.add_field(
     name="🎲 !countercheck",
-    value="""
+    value=f"""
         **!countercheck**
-- Déclenché uniquement si vous êtes ciblé par un !check
+- Déclenché uniquement si vous êtes ciblé par un !check en cours
 - Lance un contre-défi à l'initiateur du check
-- L'initiateur a maintenant 10 minutes pour répondre
-- Si pas de réponse : **PERTE DE TOUS SES POINTS**""",
+- L'initiateur a maintenant {COUNTERCHECK_WINDOW // 60} minutes pour répondre
+- Si pas de réponse : il perd {int(COUNTERCHECK_PENALTY_RATE * 100)} % de ses points (au moins {COUNTERCHECK_PENALTY_MIN})""",
         inline=False
     )
     
@@ -645,34 +868,3 @@ async def help(ctx):
     await ctx.send(embed=embed)
 
 bot.run(token)
-
-async def check_validity(user_id):
-    initiators = []
-    valid_checks = []
-    current_time = datetime.now(france_tz)
-
-    # Recherche de tous les checks valides pour l'utilisateur
-    for user, user_data_entry in user_data.items():
-        if "scarlanat_timers" in user_data_entry:
-            for checked_user, check_timer_info in list(user_data_entry["scarlanat_timers"].items()):
-                if (checked_user == user_id and 
-                    check_timer_info.get("type") == "initial_check" and 
-                    not check_timer_info.get("responded", False)):
-                    
-                    start_time = check_timer_info["start_time"]
-                    if isinstance(start_time, str):
-                        start_time = datetime.fromisoformat(start_time)
-                    
-                    # Convertir start_time en timezone-aware si nécessaire
-                    if start_time.tzinfo is None:
-                        start_time = france_tz.localize(start_time)
-                    
-                    # Vérification du timer
-                    if (current_time - start_time).total_seconds() <= 1800:  # 30 minutes
-                        initiators.append(user)
-                        valid_checks.append({
-                            'initiator': user, 
-                            'timer_info': check_timer_info
-                        })
-
-    return initiators, valid_checks
