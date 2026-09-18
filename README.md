@@ -102,9 +102,9 @@ Préfixe : `!`
 
 ## Système de points
 
-Toutes les valeurs d'équilibrage sont regroupées dans un bloc de constantes en
-haut de `main.py` : il n'y a rien d'autre à modifier dans le fichier pour
-retoucher le jeu.
+Toutes les valeurs d'équilibrage sont regroupées dans `config.py` : c'est le
+seul fichier à modifier pour retoucher le jeu. Les messages du bot et l'aide
+`!help` s'y réfèrent, ils restent donc toujours cohérents avec les règles.
 
 | Constante | Valeur | Effet |
 | --- | --- | --- |
@@ -145,7 +145,7 @@ par deux mécanismes qui lisent ces timers persistés :
 
 - un **listener de messages**, qui crédite la cible dès qu'elle écrit dans le
   salon du défi ;
-- une **boucle de fond** (`start_timer`, toutes les 30 s), qui envoie les
+- une **boucle de fond** (`watch_timers`, toutes les 30 s), qui envoie les
   rappels, règle les échéances (gains et pénalités) et purge les timers clos.
 
 C'est ce qui permet à un check lancé avant un redéploiement de se conclure
@@ -163,11 +163,37 @@ pas à la seconde près.
 
 ```
 bot_discord/
-├── main.py          # Bot Discord : commandes, logique de points, accès MongoDB
-├── keep_alive.py    # Serveur Flask minimal pour garder le service éveillé
-├── requirements.txt # Dépendances Python
-└── .env             # Secrets (non versionné)
+├── main.py              # Point d'entrée : assemble le bot et charge les cogs
+├── config.py            # Variables d'environnement et valeurs d'équilibrage
+├── state.py             # Règles du jeu, sans Discord ni MongoDB
+├── storage.py           # Persistance MongoDB (écriture différentielle)
+├── cogs/
+│   ├── economy.py       # !wassimchien, !points, !classement, !reset
+│   ├── challenges.py    # !check, !countercheck, listener et boucle de fond
+│   ├── fun.py           # !pompecheck, !watercheck
+│   └── aide.py          # !help
+├── tests/               # Suite pytest (aucun réseau requis)
+├── keep_alive.py        # Serveur Flask minimal pour garder le service éveillé
+├── requirements.txt     # Dépendances Python
+├── requirements-dev.txt # Dépendances de développement (pytest)
+└── .env                 # Secrets (non versionné)
 ```
+
+`state.py` ne dépend ni de Discord ni de MongoDB : toute la logique qui décide
+qui gagne ou perd des points s'y trouve, et se teste donc sans réseau. Les cogs
+traduisent ces décisions en messages, `storage.py` les persiste.
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+La suite tourne hors ligne : ni Discord ni MongoDB ne sont contactés, les deux
+sont remplacés par des doublures dans `tests/conftest.py`. Elle couvre les
+règles de points, le déroulement complet d'un défi (réponse, expiration,
+contre-défi) et la persistance, y compris le scénario de redémarrage du bot.
 
 ## Problèmes courants
 
