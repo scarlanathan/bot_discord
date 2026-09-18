@@ -131,8 +131,27 @@ Règles annexes :
   par un joueur dont le solde est négatif.
 - Le compte à rebours d'un `!check` est commun à toutes les cibles : une réponse
   ne relance pas le délai des autres.
+- Seul un vrai message compte comme réponse, dans le salon où le check a été
+  lancé. Taper une commande (`!points`, `!classement`…) ne rapporte rien.
 - Le `!countercheck` n'est valide que sur un `!check` en cours auquel vous
-  n'avez pas encore répondu.
+  n'avez pas encore répondu. Il referme le check initial sans gain ni perte et
+  met l'initiateur sous pression à son tour.
+
+## Déroulement d'un défi
+
+Le défi ne vit pas dans la commande qui l'a lancé : `!check` se contente
+d'enregistrer un timer en base, puis rend la main. La suite est prise en charge
+par deux mécanismes qui lisent ces timers persistés :
+
+- un **listener de messages**, qui crédite la cible dès qu'elle écrit dans le
+  salon du défi ;
+- une **boucle de fond** (`start_timer`, toutes les 30 s), qui envoie les
+  rappels, règle les échéances (gains et pénalités) et purge les timers clos.
+
+C'est ce qui permet à un check lancé avant un redéploiement de se conclure
+normalement après le redémarrage : l'état est en base, pas dans une coroutine.
+En contrepartie, une expiration est réglée dans les 30 s qui suivent l'échéance,
+pas à la seconde près.
 - Une tâche de fond prévient en MP (ou sur `CHANNEL_ID` si les MP sont fermés)
   5 minutes avant l'expiration d'un timer, une seule fois par timer, et purge
   les timers laissés par un redémarrage du bot. Elle ne modifie jamais les

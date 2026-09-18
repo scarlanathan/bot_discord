@@ -4,7 +4,6 @@ import json
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv # type: ignore
-import asyncio
 import pymongo # type: ignore
 from pymongo import MongoClient # type: ignore
 from datetime import datetime
@@ -116,27 +115,64 @@ def to_aware(value):
     return value.astimezone(france_tz)
 
 
+def timer_window(timer_type):
+    """Délai accordé selon le type de timer."""
+    return COUNTERCHECK_WINDOW if timer_type == "countercheck" else CHECK_WINDOW
+
+
+def is_resolved(timer_info):
+    """`responded` et `status` sont les champs de l'ancien format."""
+    return bool(timer_info.get("resolved")
+                or timer_info.get("responded")
+                or timer_info.get("status") == "responded")
+
+
+def mark_resolved(timer_info, outcome):
+    """Clôt un timer. `outcome` : responded, expired ou countered."""
+    timer_info["resolved"] = True
+    timer_info["outcome"] = outcome
+    timer_info["responded"] = True  # compatibilité avec l'ancien format
+
+
+def pending_timers():
+    """Tous les timers encore en jeu, sous la forme
+    (initiateur, clé, timer, type, joueur attendu).
+
+    C'est la seule source de vérité sur les défis en cours : elle est
+    persistée en base, donc elle survit à un redémarrage du bot.
+    """
+    # Copies : les commandes modifient `user_data` pendant l'itération
+    for initiator_id, data in list(user_data.items()):
+        for key, timer_info in list(data.get("scarlanat_timers", {}).items()):
+            if not isinstance(timer_info, dict) or "start_time" not in timer_info:
+                continue
+            if is_resolved(timer_info):
+                continue
+
+            timer_type = timer_info.get("type", "initial_check")
+            # Sur un countercheck, c'est l'initiateur du check qui doit répondre
+            waiting_id = initiator_id if timer_type == "countercheck" else key
+            yield initiator_id, key, timer_info, timer_type, waiting_id
+
+
 async def check_validity(user_id):
     """Renvoie les checks en cours, encore valides, ciblant `user_id`."""
     initiators = []
     valid_checks = []
     current_time = datetime.now(france_tz)
 
-    for user, user_data_entry in user_data.items():
-        for checked_user, check_timer_info in list(user_data_entry.get("scarlanat_timers", {}).items()):
-            if (checked_user != str(user_id)
-                    or check_timer_info.get("type") != "initial_check"
-                    or check_timer_info.get("responded", False)):
-                continue
+    for initiator_id, key, timer_info, timer_type, _ in pending_timers():
+        if key != str(user_id) or timer_type != "initial_check":
+            continue
 
-            start_time = to_aware(check_timer_info["start_time"])
+        start_time = to_aware(timer_info["start_time"])
 
-            if (current_time - start_time).total_seconds() <= CHECK_WINDOW:
-                initiators.append(user)
-                valid_checks.append({
-                    'initiator': user,
-                    'timer_info': check_timer_info
-                })
+        if (current_time - start_time).total_seconds() <= CHECK_WINDOW:
+            initiators.append(initiator_id)
+            valid_checks.append({
+                'initiator': initiator_id,
+                'timer_info': timer_info
+            })
 
     return initiators, valid_checks
 
@@ -304,44 +340,129 @@ async def notify_timer(guild, user_id, timer_type, time_left):
         print(f"Impossible de prévenir {user_id} de l'expiration de son timer.")
 
 
+async def announce(timer_info, text):
+    """Publie le dénouement d'un timer dans le salon où il a été lancé."""
+    channel = bot.get_channel(timer_info.get("channel_id") or 0)
+    if channel is None and CHANNEL_ID:
+        channel = bot.get_channel(CHANNEL_ID)
+    if channel is None:
+        print(f"Aucun salon disponible pour annoncer : {text}")
+        return
+    await channel.send(text)
+
+
+async def resolve_check_response(target_id, timer_info):
+    """La cible d'un check a donné signe de vie : elle encaisse sa récompense."""
+    gained = add_points(target_id, CHECK_RESPONSE_REWARD)
+    ensure_user(target_id)["last_claim"] = datetime.now(france_tz).strftime("%Y-%m-%d")
+    mark_resolved(timer_info, "responded")
+    await announce(timer_info, f"🎉 <@{target_id}> a répondu ! Il gagne {gained} points ! "
+                               f"Total : {get_points(target_id)} points")
+
+
+async def resolve_countercheck_response(initiator_id, timer_info):
+    """L'initiateur a réagi au contre-défi : il échappe à la pénalité."""
+    mark_resolved(timer_info, "responded")
+    await announce(timer_info, f"🎉 <@{initiator_id}> a répondu à temps, il échappe à la pénalité !")
+
+
+def expire_check(initiator_id, target_id, timer_info):
+    """Personne n'a répondu : l'initiateur encaisse, la cible paie.
+
+    Ne publie rien : la boucle regroupe les messages d'un même initiateur.
+    """
+    earned = add_points(initiator_id, CHECK_TIMEOUT_REWARD)
+    lost = -add_points(target_id, -CHECK_TIMEOUT_PENALTY)
+    mark_resolved(timer_info, "expired")
+    return earned, lost
+
+
+async def expire_countercheck(initiator_id, timer_info):
+    """L'initiateur a laissé filer le contre-défi : pénalité proportionnelle."""
+    before = get_points(initiator_id)
+    penalite = max(COUNTERCHECK_PENALTY_MIN, int(before * COUNTERCHECK_PENALTY_RATE))
+    lost = -add_points(initiator_id, -penalite)
+    mark_resolved(timer_info, "expired")
+    await announce(timer_info, f"❌ <@{initiator_id}> n'a pas répondu au countercheck "
+                               f"et perd {lost} points ! ({before} → {get_points(initiator_id)})")
+
+
+async def settle_expirations(expirations):
+    """Règle les timers échus. Les checks d'un même initiateur sont regroupés
+    en un seul message : après une longue coupure, la boucle en rattrape
+    potentiellement plusieurs d'un coup."""
+    par_initiateur = {}
+    for initiator_id, key, timer_info, timer_type in expirations:
+        if timer_type == "countercheck":
+            await expire_countercheck(initiator_id, timer_info)
+        else:
+            par_initiateur.setdefault(initiator_id, []).append((key, timer_info))
+
+    for initiator_id, checks in par_initiateur.items():
+        gains = 0
+        lignes = []
+        for target_id, timer_info in checks:
+            earned, lost = expire_check(initiator_id, target_id, timer_info)
+            gains += earned
+            if lost:
+                lignes.append(f"<@{target_id}> perd {lost} points (total : {get_points(target_id)})")
+            else:
+                lignes.append(f"<@{target_id}> est déjà au plancher de {POINTS_FLOOR} points")
+
+        await announce(checks[0][1],
+                       "⏱️ Temps écoulé, personne n'a répondu.\n"
+                       f"🎉 <@{initiator_id}> gagne {gains} points "
+                       f"(total : {get_points(initiator_id)})\n" + "\n".join(lignes))
+
+
+def purge_resolved_timers(current_time):
+    """Efface les timers clos, une fois passée la marge de sécurité."""
+    purged = False
+    for data in list(user_data.values()):
+        timers = data.get("scarlanat_timers", {})
+        for key, timer_info in list(timers.items()):
+            if not isinstance(timer_info, dict) or "start_time" not in timer_info:
+                del timers[key]
+                purged = True
+                continue
+
+            age = (current_time - to_aware(timer_info["start_time"])).total_seconds()
+            if is_resolved(timer_info) and age > TIMER_CLEANUP_GRACE:
+                del timers[key]
+                purged = True
+    return purged
+
+
 @tasks.loop(seconds=TIMER_CHECK_INTERVAL)
 async def start_timer():
-    """Rappelle aux joueurs qu'un timer approche de son terme, et purge les
-    timers laissés derrière par un redémarrage du bot."""
+    """Fait vivre les défis en dehors des commandes : rappels, règlement des
+    échéances, purge. C'est ce qui permet à un check de se conclure même si le
+    bot a redémarré entre son lancement et son expiration."""
     current_time = datetime.now(france_tz)
     guild = bot.get_guild(GUILD_ID) if GUILD_ID else None
     dirty = False
+    expirations = []
 
-    # Copies : les commandes modifient `user_data` pendant que la boucle tourne
-    for initiator_id, data in list(user_data.items()):
-        timers = data.get("scarlanat_timers", {})
-        for target_id, timer_info in list(timers.items()):
-            if not isinstance(timer_info, dict) or "start_time" not in timer_info:
-                continue
+    for initiator_id, key, timer_info, timer_type, waiting_id in pending_timers():
+        elapsed = (current_time - to_aware(timer_info["start_time"])).total_seconds()
+        time_left = timer_window(timer_type) - elapsed
 
-            timer_type = timer_info.get("type", "initial_check")
-            window = COUNTERCHECK_WINDOW if timer_type == "countercheck" else CHECK_WINDOW
-            time_left = window - (current_time - to_aware(timer_info["start_time"])).total_seconds()
+        if time_left <= 0:
+            expirations.append((initiator_id, key, timer_info, timer_type))
+            continue
 
-            # Purge des timers expirés. La marge laisse la commande encore en
-            # vol attribuer ses points avant qu'on n'efface son timer ; la
-            # boucle ne touche donc jamais aux points elle-même.
-            if time_left <= -TIMER_CLEANUP_GRACE:
-                del timers[target_id]
-                dirty = True
-                continue
+        # Un seul rappel, à l'approche de l'échéance
+        if time_left <= TIMER_REMINDER_BEFORE and not timer_info.get("reminded"):
+            timer_info["reminded"] = True
+            dirty = True
+            await notify_timer(guild, waiting_id, timer_type, time_left)
 
-            if timer_info.get("responded") or timer_info.get("status") == "responded":
-                continue
+    if expirations:
+        await settle_expirations(expirations)
+        dirty = True
 
-            # Sur un countercheck, c'est l'initiateur du check qui doit répondre
-            waiting_id = initiator_id if timer_type == "countercheck" else target_id
-
-            # Un seul rappel, à l'approche de l'échéance
-            if 0 < time_left <= TIMER_REMINDER_BEFORE and not timer_info.get("reminded"):
-                timer_info["reminded"] = True
-                dirty = True
-                await notify_timer(guild, waiting_id, timer_type, time_left)
+    if purge_resolved_timers(current_time):
+        dirty = True
 
     if dirty:
         save_points()
@@ -358,6 +479,47 @@ async def start_timer_error(error):
     print(f"Erreur dans la surveillance des timers : {error}")
     if not start_timer.is_running():
         start_timer.start()
+
+@bot.listen('on_message')
+async def resolve_timers_on_message(message):
+    """Un message du joueur attendu règle son timer. Passer par un listener
+    plutôt que par `wait_for` permet à un check de se conclure même si la
+    commande qui l'a lancé n'existe plus (redémarrage du bot)."""
+    if message.author.bot:
+        return
+
+    # Une commande n'est pas une réponse, sinon !points rapporterait des points
+    context = await bot.get_context(message)
+    if context.valid:
+        return
+
+    author_id = str(message.author.id)
+    current_time = datetime.now(france_tz)
+    resolved = False
+
+    for initiator_id, key, timer_info, timer_type, waiting_id in pending_timers():
+        if waiting_id != author_id:
+            continue
+
+        # Le défi se joue dans le salon où il a été lancé
+        channel_id = timer_info.get("channel_id")
+        if channel_id and message.channel.id != channel_id:
+            continue
+
+        # Déjà expiré : c'est à la boucle de trancher, pas à ce message
+        elapsed = (current_time - to_aware(timer_info["start_time"])).total_seconds()
+        if elapsed > timer_window(timer_type):
+            continue
+
+        if timer_type == "countercheck":
+            await resolve_countercheck_response(initiator_id, timer_info)
+        else:
+            await resolve_check_response(key, timer_info)
+        resolved = True
+
+    if resolved:
+        save_points()
+
 
 @bot.command(name="wassimchien", aliases=["wc"])
 async def wassimchien(ctx):
@@ -424,19 +586,11 @@ async def check(ctx, *mentions: discord.Member):
         await ctx.send(f"❌ Vous ne pouvez utiliser cette commande qu'entre 5h30 et 14h. Heure actuelle : {current_time.strftime('%H:%M')}")
         return
 
-    today = current_time.strftime("%Y-%m-%d")
-
     if ctx.author in mentions:
         await ctx.send("❌ Vous ne pouvez pas vous check vous-même !")
         return
 
     initiator = ensure_user(user_id)
-
-    # Nettoyer les anciens timers avant d'en créer de nouveaux
-    for checked_user_id, timer_info in list(initiator["scarlanat_timers"].items()):
-        timer_info["start_time"] = to_aware(timer_info["start_time"])
-        if (current_time - timer_info["start_time"]).total_seconds() > CHECK_WINDOW:
-            del initiator["scarlanat_timers"][checked_user_id]
 
     # Dédoublonner les mentions en gardant l'ordre, et écarter les bots
     checked_users = []
@@ -483,7 +637,9 @@ async def check(ctx, *mentions: discord.Member):
                 "start_time": current_time,
                 "initiator": user_id,
                 "type": "initial_check",
-                "responded": False  # Nouveau champ pour suivre la réponse
+                "channel_id": ctx.channel.id,
+                "resolved": False,
+                "responded": False
             }
 
     # Message récapitulatif
@@ -492,81 +648,9 @@ async def check(ctx, *mentions: discord.Member):
         f"Un compteur de {CHECK_WINDOW // 60} minutes a été lancé pour {users_mention}.\n"
         f"Répondre = +{CHECK_RESPONSE_REWARD} points, se taire = -{CHECK_TIMEOUT_PENALTY} points."
     )
-    save_points()
 
-    # Attente des réponses : l'échéance est fixe, une réponse ne relance pas
-    # le compteur des autres cibles
-    deadline = current_time + timedelta(seconds=CHECK_WINDOW)
-    responded_users = set()
-    try:
-        while len(responded_users) < len(checked_users):
-            remaining = (deadline - datetime.now(france_tz)).total_seconds()
-            if remaining <= 0:
-                raise asyncio.TimeoutError
-
-            response = await bot.wait_for(
-                "message",
-                timeout=remaining,
-                check=lambda m: (
-                    m.author.id in [user.id for user in checked_users] and
-                    m.channel == ctx.channel and
-                    m.author.id not in responded_users
-                )
-            )
-
-            # Identifier l'utilisateur qui a répondu
-            responder_id = str(response.author.id)
-            responder = ensure_user(responder_id)
-
-            # Marquer le timer comme répondu
-            timer_info = initiator["scarlanat_timers"].get(responder_id)
-            if timer_info:
-                timer_info["responded"] = True
-
-            # Donner les points à l'utilisateur qui a répondu
-            gained = add_points(responder_id, CHECK_RESPONSE_REWARD)
-            responder["last_claim"] = today
-
-            # Ajouter l'utilisateur aux répondants
-            responded_users.add(response.author.id)
-            save_points()
-
-            # Message de confirmation
-            await ctx.send(f"🎉 <@{response.author.id}> a répondu ! Il gagne {gained} points ! Total: {responder['points']} points")
-
-        # Si tous les utilisateurs ont répondu
-        await ctx.send("Tous les utilisateurs mentionnés ont répondu !")
-
-    except asyncio.TimeoutError:
-        # Liste des utilisateurs qui n'ont pas répondu
-        non_responded = [user for user in checked_users if user.id not in responded_users]
-
-        if non_responded:
-            # Donner des points à l'initiateur pour chaque utilisateur silencieux
-            points_earned = add_points(user_id, len(non_responded) * CHECK_TIMEOUT_REWARD)
-            initiator["last_claim"] = today
-
-            # Retirer des points aux utilisateurs qui n'ont pas répondu
-            losses = {}
-            for user_to_check in non_responded:
-                losses[user_to_check.id] = -add_points(user_to_check.id, -CHECK_TIMEOUT_PENALTY)
-
-            # Message indiquant qui n'a pas répondu
-            non_responded_mentions = " ".join([user.mention for user in non_responded])
-            await ctx.send(f"🎉 <@{ctx.author.id}> a gagné {points_earned} points car {non_responded_mentions} n'ont pas répondu ! Total: {initiator['points']} points")
-
-            # Message pour les utilisateurs qui n'ont pas répondu
-            for user in non_responded:
-                perdu = losses[user.id]
-                if perdu:
-                    await ctx.send(f"<@{user.id}> a perdu {perdu} points pour ne pas avoir répondu. Nouveau total : {get_points(user.id)} points")
-                else:
-                    await ctx.send(f"<@{user.id}> n'a pas répondu, mais est déjà au plancher de {POINTS_FLOOR} points.")
-
-    # Nettoyer les timers de ce check, quel que soit le dénouement
-    for user in checked_users:
-        initiator["scarlanat_timers"].pop(str(user.id), None)
-
+    # La commande s'arrête ici : ce sont le listener de messages et la boucle
+    # de fond qui concluent le défi, à partir des timers enregistrés en base.
     save_points()
     
 @bot.command(name="pompecheck")
@@ -621,10 +705,17 @@ async def countercheck(ctx):
         initiator_id = check['initiator']
         initiator = ensure_user(initiator_id)
 
-        # Création du timer de countercheck
+        # Le check initial se referme sans gain ni perte : plutôt que de
+        # répondre, la cible a renvoyé la pression sur l'initiateur.
+        mark_resolved(check['timer_info'], "countered")
+
+        # Le timer de countercheck prend sa place, sur la même clé
         initiator["scarlanat_timers"][user_id] = {
             "start_time": current_time,
+            "initiator": initiator_id,
             "type": "countercheck",
+            "channel_id": ctx.channel.id,
+            "resolved": False,
             "status": "waiting_response"
         }
 
@@ -634,58 +725,7 @@ async def countercheck(ctx):
             f"(au moins {COUNTERCHECK_PENALTY_MIN}) !"
         )
 
-    save_points()
-
-    # Attente des réponses : échéance commune à tous les initiateurs
-    deadline = current_time + timedelta(seconds=COUNTERCHECK_WINDOW)
-    responses = []
-    try:
-        for _ in range(len(valid_checks)):
-            remaining = (deadline - datetime.now(france_tz)).total_seconds()
-            if remaining <= 0:
-                raise asyncio.TimeoutError
-
-            response = await bot.wait_for(
-                "message",
-                timeout=remaining,
-                check=lambda m: (
-                    m.author.id in [int(check['initiator']) for check in valid_checks] and
-                    m.channel == ctx.channel and
-                    m.author.id not in [r.author.id for r in responses]
-                )
-            )
-            responses.append(response)
-
-            # Marquer le countercheck comme réussi
-            responder_id = str(response.author.id)
-            timer_info = ensure_user(responder_id)["scarlanat_timers"].get(user_id)
-            if timer_info:
-                timer_info["status"] = "responded"
-            await ctx.send(f"🎉 <@{response.author.id}> a répondu à temps !")
-
-    except asyncio.TimeoutError:
-        # Gestion des non-répondants
-        responded_ids = {str(r.author.id) for r in responses}
-        non_respondents = [
-            check['initiator'] for check in valid_checks
-            if str(check['initiator']) not in responded_ids
-        ]
-
-        for initiator_id in non_respondents:
-            points_before = get_points(initiator_id)
-            # Pénalité proportionnelle, avec un minimum, et bornée par le plancher
-            penalite = max(COUNTERCHECK_PENALTY_MIN, int(points_before * COUNTERCHECK_PENALTY_RATE))
-            perdu = -add_points(initiator_id, -penalite)
-
-            await ctx.send(
-                f"❌ <@{initiator_id}> n'a pas répondu à temps et perd {perdu} points ! "
-                f"({points_before} → {get_points(initiator_id)})"
-            )
-
-    # Nettoyage des timers du countercheck
-    for check in valid_checks:
-        ensure_user(check['initiator'])["scarlanat_timers"].pop(user_id, None)
-
+    # Comme pour !check, le dénouement est confié au listener et à la boucle
     save_points()
     
     
@@ -813,9 +853,10 @@ async def help(ctx):
     value=f"""
         **!check @utilisateur**
 - Lance un défi à un utilisateur (entre 5h30 et 14h)
-- L'utilisateur ciblé a {CHECK_WINDOW // 60} minutes pour répondre
+- L'utilisateur ciblé a {CHECK_WINDOW // 60} minutes pour écrire dans le salon
 - Si réponse : +{CHECK_RESPONSE_REWARD} points pour le répondant
 - Si pas de réponse : +{CHECK_TIMEOUT_REWARD} points pour l'initiateur, -{CHECK_TIMEOUT_PENALTY} points pour le ciblé
+- Une commande ne compte pas comme une réponse, il faut un vrai message
 - Max {CHECK_MAX_TARGETS} cibles, et {CHECK_TARGET_COOLDOWN // 60} min de cooldown avant de re-checker la même personne""",
         inline=False
     )
@@ -825,9 +866,10 @@ async def help(ctx):
     value=f"""
         **!countercheck**
 - Déclenché uniquement si vous êtes ciblé par un !check en cours
-- Lance un contre-défi à l'initiateur du check
+- Renvoie la pression sur l'initiateur : le check initial se referme sans point
 - L'initiateur a maintenant {COUNTERCHECK_WINDOW // 60} minutes pour répondre
-- Si pas de réponse : il perd {int(COUNTERCHECK_PENALTY_RATE * 100)} % de ses points (au moins {COUNTERCHECK_PENALTY_MIN})""",
+- S'il répond : personne ne gagne ni ne perd rien
+- S'il se tait : il perd {int(COUNTERCHECK_PENALTY_RATE * 100)} % de ses points (au moins {COUNTERCHECK_PENALTY_MIN})""",
         inline=False
     )
     
