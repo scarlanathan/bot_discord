@@ -34,8 +34,8 @@ class Challenges(commands.Cog):
             return
         await channel.send(text)
 
-    async def notify(self, guild, user_id, timer_type, seconds_left):
-        """Prévient un joueur en MP de l'échéance ; à défaut, sur le salon de repli."""
+    async def notify(self, timer_info, user_id, timer_type, seconds_left):
+        """Prévient un joueur de l'échéance, dans le salon où le défi a été lancé."""
         minutes = max(1, round(seconds_left / 60))
         if timer_type == "countercheck":
             message = (f"⏱️ Il vous reste environ {minutes} min pour répondre au countercheck, "
@@ -45,27 +45,7 @@ class Challenges(commands.Cog):
             message = (f"⏱️ Il vous reste environ {minutes} min pour répondre au check, "
                        f"sinon vous perdez {config.CHECK_TIMEOUT_PENALTY} points.")
 
-        member = None
-        if guild:
-            member = guild.get_member(int(user_id))
-            if member is None:
-                try:
-                    member = await guild.fetch_member(int(user_id))
-                except discord.HTTPException:
-                    member = None
-
-        if member:
-            try:
-                await member.send(message)
-                return
-            except discord.HTTPException:
-                pass  # MP fermés : on bascule sur le salon de repli
-
-        channel = self.bot.get_channel(config.CHANNEL_ID) if config.CHANNEL_ID else None
-        if channel:
-            await channel.send(f"<@{user_id}> {message}")
-        else:
-            print(f"Impossible de prévenir {user_id} de l'expiration de son timer.")
+        await self.announce(timer_info, f"<@{user_id}> {message}")
 
     # -------------------------------------------------------------- règlements
     async def settle_expirations(self, expirations):
@@ -109,7 +89,6 @@ class Challenges(commands.Cog):
         Méthode à part pour être appelable directement par les tests.
         """
         moment = state.now()
-        guild = self.bot.get_guild(config.GUILD_ID) if config.GUILD_ID else None
         dirty = False
         expirations = []
 
@@ -124,7 +103,7 @@ class Challenges(commands.Cog):
             if seconds_left <= config.TIMER_REMINDER_BEFORE and not timer_info.get("reminded"):
                 timer_info["reminded"] = True
                 dirty = True
-                await self.notify(guild, waiting_id, timer_type, seconds_left)
+                await self.notify(timer_info, waiting_id, timer_type, seconds_left)
 
         if expirations:
             await self.settle_expirations(expirations)

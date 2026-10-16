@@ -65,7 +65,7 @@ POINTS_FLOOR = -100
 
 # Surveillance des timers en arrière-plan
 TIMER_CHECK_INTERVAL = 30       # fréquence de la boucle de surveillance
-TIMER_REMINDER_BEFORE = 300     # rappel en MP 5 min avant la fin du délai
+TIMER_REMINDER_BEFORE = 300     # rappel dans le salon 5 min avant la fin du délai
 TIMER_CLEANUP_GRACE = 60        # marge avant de purger un timer clos
 
 # !pompecheck — paliers (seuil de points, nombre de pompes)
